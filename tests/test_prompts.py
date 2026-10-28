@@ -118,3 +118,58 @@ def test_gguf_prompt_requires_model(config):
         GGUFChatPrompt(config).get_prompt()
     with pytest.raises(ValueError, match="no embedded chat template"):
         GGUFChatPrompt(config).bind_llm(FakeLlm(None))
+
+
+HISTORY = [("Q1 {x}?", "A1 {y}."), ("Q2?", "A2.")]
+
+
+def test_gguf_prompt_with_history_alternates_roles(config):
+    template = _gguf_prompt(config, CHATML_TEMPLATE).get_prompt(docs=True, history=HISTORY)
+    assert set(template.input_variables) == {"context", "question"}
+    text = template.format(context="CTX", question="Q3?")
+    turns = [
+        "<|im_start|>user\nQ1 {x}?<|im_end|>",
+        "<|im_start|>assistant\nA1 {y}.<|im_end|>",
+        "<|im_start|>user\nQ2?<|im_end|>",
+        "<|im_start|>assistant\nA2.<|im_end|>",
+        "<|im_start|>user\nQ3?<|im_end|>",
+    ]
+    positions = [text.index(turn) for turn in turns]
+    assert positions == sorted(positions)
+    assert text.index("CTX") < positions[0]  # notes stay in the system message
+
+
+def test_gguf_prompt_history_without_system_role(config):
+    text = (
+        _gguf_prompt(config, NO_SYSTEM_TEMPLATE)
+        .get_prompt(docs=True, history=HISTORY)
+        .format(context="CTX", question="Q3?")
+    )
+    assert text.startswith("<user>You are")
+    assert "[/DATA]\n\nQ1 {x}?</user><user>A1 {y}.</user>" in text
+    assert text.endswith("<user>Q3?</user>")
+
+
+def test_gguf_prompt_web_and_notes(config):
+    text = _gguf_prompt(config, CHATML_TEMPLATE).get_prompt(web=True, docs=True).format(context="CTX", question="Q?")
+    assert "web search results and the user's personal notes" in text
+
+
+def test_tinyllama_history_format(config):
+    text = TinyLlamaChatPrompt(config).get_prompt(docs=True, history=HISTORY).format(context="CTX", question="Q3?")
+    assert "[/DATA]</s>\n<|user|>\nQ1 {x}?</s>\n<|assistant|>\nA1 {y}.</s>\n<|user|>\nQ2?</s>\n" in text
+    assert text.endswith("<|assistant|>\nA2.</s>\n<|user|>\nQ3?</s>\n<|assistant|>")
+
+
+def test_llama2_history_format(config):
+    text = Llama2ChatPrompt(config).get_prompt(docs=True, history=HISTORY).format(context="CTX", question="Q3?")
+    assert text.startswith("[INST] <<SYS>>\n")
+    assert text.endswith("<</SYS>>\n\nQ1 {x}? [/INST] A1 {y}. </s><s>[INST] Q2? [/INST] A2. </s><s>[INST] Q3? [/INST]")
+
+
+@pytest.mark.parametrize("prompt_cls", [Phi2QAPrompt, Phi2ChatPrompt])
+def test_single_turn_prompts_ignore_history(config, prompt_cls):
+    prompt = prompt_cls(config)
+    assert not prompt.supports_history
+    text = prompt.get_prompt(docs=True, history=HISTORY).format(context="CTX", question="Q?")
+    assert "Q1" not in text

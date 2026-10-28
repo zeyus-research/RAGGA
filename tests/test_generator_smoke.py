@@ -51,6 +51,13 @@ def test_answers_from_notes(tmp_path):
     assert "".join(streamed).strip()
     assert "Biscuit" in (generator.last_context or "")
 
-    # "continue" reuses the stored prompt + output
-    more = "".join(generator.get_answer_stream("continue"))
-    assert isinstance(more, str)
+    # a follow-up sees the conversation so far
+    "".join(generator.get_answer_stream("What colour is she?"))
+    assert len(generator.history) == 2
+    assert generator.history[0][1] in (generator.last_context or "")
+
+    # continuing reuses the stored prompt + output, and extends the last answer
+    before = generator.history[-1][1]
+    "".join(generator.continue_stream())
+    assert len(generator.history) == 2
+    assert generator.history[-1][1].startswith(before)

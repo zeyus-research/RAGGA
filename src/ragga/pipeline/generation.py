@@ -18,7 +18,6 @@ from langchain_core.runnables.base import Runnable
 from ragga.core.config import Config, Configurable
 from ragga.core.dispatch import PropertyWrapper
 from ragga.core.io import store_stdout_stderr
-from ragga.crafting.commands import extract_keywords
 from ragga.crafting.prompt import Prompt
 from ragga.pipeline.documents import VectorDatabase
 from ragga.pipeline.llm import LlamaCpp
@@ -147,6 +146,7 @@ class Generator(Configurable):
             "temperature": 0.9,
             "gpu_layers": 50,
             "max_tokens": 128,
+            "history_tokens": 2048,
             "n_batch": 256,
             "llama": False,
             "autoflush": True,
@@ -177,20 +177,18 @@ class Generator(Configurable):
         search_kwargs = {
             "k": self.config[vectorstore.key]["num_docs"],
         }
-        self._keywords: dict[str, str | bool | None] = {
-            "command": "",
-            "where": "",
-            "what": "",
-            "known": False,
-        }
         self._model_stdout: StringIO = StringIO()
         self._model_stderr: StringIO = StringIO()
         self._web_retriever: BaseRetriever | None = websearch
-        self._known_locations: set[str] = set({"notes", "note", "writing", "writings"})
-        self._last_query: str | None = None
         self._question: str | None = None
+        # earlier (question, answer) turns, and those of them that fit in the prompt this turn
+        self._history: list[tuple[str, str]] = []
+        self._kept_history: list[tuple[str, str]] = []
+        self.forgotten_turns: int = 0
+        self._last_web: bool = False
         self._last_context: str | None = None
         self._last_output: str = ""
+        self._generations: int = 0  # prompts sent to the LLM, to tell whether a stream got that far
         self._web_search: bool = False
         self._model_response_handler = ModelResponseHandler()
         self._merge_default_kwargs(default_kwargs, "model_kwargs")
@@ -221,6 +219,8 @@ class Generator(Configurable):
                 generate_kwargs=generate_kwargs,
             )
         prompt.bind_llm(self._llm.client)
+        if self.config[self._config_key]["history_tokens"] and not prompt.supports_history:
+            logging.warning(f"{prompt.__class__.__name__} is single-turn: follow-up questions won't see earlier ones")
         self._llm_with_wrap: Runnable[LanguageModelInput, str | BaseMessage]
         # self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
         #     self.config[self._config_key]["hf_tokenizer"]
@@ -244,7 +244,7 @@ class Generator(Configurable):
         self._retriever = self._vectorstore.retriever
         retrieval: Runnable = self._retriever
         if self._web_retriever is not None:
-            retrieval = RunnableBranch((self._use_web_retriever, self._web_retriever), self._retriever)
+            retrieval = RunnableBranch((self._use_web_retriever, self._search_web_and_notes), self._retriever)
         self._inputs: Runnable = RunnableParallel(  # type: ignore
             {
                 "question": itemgetter("question"),
@@ -299,9 +299,21 @@ class Generator(Configurable):
     def _set_template(self, _x: str) -> None:
         """Get the template"""
         if self._use_web_retriever():
-            self._template = self._prompt.get_prompt(web=True)
+            self._template = self._prompt.get_prompt(web=True, docs=True, history=self._kept_history)
         else:
-            self._template = self._prompt.get_prompt(docs=True)
+            self._template = self._prompt.get_prompt(docs=True, history=self._kept_history)
+
+    def _trim_history(self, history: list[tuple[str, str]]) -> None:
+        """Keep the newest turns that fit in generator.history_tokens, whole turns are dropped oldest first."""
+        budget: int = self.config[self._config_key]["history_tokens"] or 0
+        kept: list[tuple[str, str]] = []
+        for q, a in reversed(history):
+            budget -= self._llm.get_num_tokens(q) + self._llm.get_num_tokens(a)
+            if budget < 0:
+                break
+            kept.append((q, a))
+        self._kept_history = kept[::-1]
+        self.forgotten_turns = len(history) - len(kept)
 
     def _can_continue(self) -> bool:
         """Check if the context can be continued"""
@@ -319,6 +331,7 @@ class Generator(Configurable):
             ctx = ctx.to_string()
         self._last_context = ctx
         self._last_output = ""
+        self._generations += 1
 
     def _store_output(self, output: str) -> None:
         """
@@ -336,21 +349,22 @@ class Generator(Configurable):
         logging.info("Using vector retriever")
         return False
 
+    def _search_web_and_notes(self, query: str) -> list[Document]:
+        """Web results first (they're what was asked for), then the notes fill whatever context is left."""
+        if self._web_retriever is None:
+            msg = "web search is not enabled"
+            raise ValueError(msg)
+        return self._web_retriever.invoke(query) + self._retriever.invoke(query)
+
     def _prepare_query(self, x: str) -> str:
         """
         Prepare the query for the retriever. Notes are searched with the full question (BM25 discounts common words
-        and embeddings work best on whole sentences), web searches with the extracted keywords.
+        and embeddings work best on whole sentences), and a follow-up ("what about the second one?") together with
+        the previous question, so it finds the notes the conversation is about. Web searches use the query as is.
         """
-        if not self._web_search:
-            logging.info(f"Searching notes for: {x}")
-            return x
-        if self._keywords["what"] is not None:
-            if self._keywords["known"] or self._keywords["where"] is None:
-                logging.info(f"Using keyword {self._keywords['what']} as query")
-                return self._keywords["what"]  # type: ignore
-            logging.info(f"Using keywords {self._keywords['what']} and {self._keywords['where']} as query")
-            return f"{self._keywords['what']} {self._keywords['where']}"
-        logging.info(f"Using full query {x}")
+        if not self._web_search and self._kept_history:
+            x = f"{self._kept_history[-1][0]}\n{x}"
+        logging.info(f"Searching {'the web' if self._web_search else 'notes'} for: {x}")
         return x
 
     def flush_stdout_stderr(self) -> tuple[str, str]:
@@ -421,107 +435,96 @@ class Generator(Configurable):
         """Get the last docs"""
         return self._docs
 
-    def _handle_command(self, kw: tuple[str | None, str | None, str | None, bool]) -> None:
-        """
-        Handle the command
-        """
-        logging.debug(f"Command: {kw[0]}")
-        self._chain = self._gen_chain
-        if kw[0] in ["redo", "repeat", "again"] and self._last_query is not None:
-            kw = extract_keywords(self._last_query, self._known_locations)
-            self._question = self._last_query
-            self._set_keywords(kw)
-            return
-        if kw[0] in ["search", "find", "websearch", "google"]:
-            self._web_search = True
-            self._set_keywords(kw)
-            return
-        if kw[0] in ["exit", "quit"]:
-            self._question = "exit"
-            msg = "Exiting..."
-            raise KeyboardInterrupt(msg)
-        if kw[0] in ["continue", "more", "next"]:
-            if self._can_continue():
-                self._chain = self._continue_chain
-                return
-            msg = "No context to continue"
-            raise ValueError(msg)
-
-        msg = "Unknown command"
-        raise LookupError(msg)
-
-    def _set_keywords(self, kw: tuple[str | None, str | None, str | None, bool]) -> None:
-        """
-        Set the keywords
-        """
-        self._keywords["command"] = kw[0]
-        self._keywords["where"] = kw[1]
-        self._keywords["what"] = kw[2]
-        self._keywords["known"] = kw[3]
-
-    def _query_keywords(self) -> None:
-        """
-        Query the keywords from the question
-        Args:
-            question (str): user's question
-        """
-        if self._question is None:
-            msg = "No question to query"
-            raise ValueError(msg)
-        self._web_search = False
-        kw = extract_keywords(self._question, self._known_locations)
-        try:
-            self._handle_command(kw)
-            return
-        except LookupError:
-            logging.debug("Unknown command, using full query")
-            self._set_keywords(kw)
-            self._last_query = self._question
-
     @property
     def last_context(self) -> str | None:
         """Get the last context"""
         return self._last_context
 
     @property
-    def last_keywords(self) -> dict[str, str | bool | None]:
-        """Get the last keywords"""
-        return self._keywords
+    def last_query(self) -> str | None:
+        """Get the last question"""
+        return self._history[-1][0] if self._history else None
 
     @property
-    def last_query(self) -> str | None:
-        """Get the last query"""
-        return self._last_query
+    def history(self) -> list[tuple[str, str]]:
+        """The conversation so far: (question, answer) turns, oldest first"""
+        return list(self._history)
 
-    def get_answer(self, question: str) -> str:
+    def reset(self) -> None:
+        """Forget the conversation, the next question starts a new one."""
+        self._history.clear()
+        self._kept_history = []
+        self.forgotten_turns = 0
+        self._last_context = None
+        self._last_output = ""
+        self._docs = None
+
+    def _ask(self, question: str, web: bool, *, redo: bool = False) -> None:
+        if web and self._web_retriever is None:
+            msg = "web search is not enabled"
+            raise ValueError(msg)
+        self._question = question
+        self._web_search = self._last_web = web
+        self._chain = self._gen_chain
+        self._trim_history(self._history[:-1] if redo else self._history)
+
+    def get_answer(self, question: str, *, web: bool = False) -> str:
         """
         Get the answer from llm based on context and user's question
         Args:
             question (str): user's question
+            web (bool): answer from a web search instead of the notes
         Returns:
             str: llm answer
         """
-        self._question = question
-        self._query_keywords()
+        self._ask(question, web)
         with store_stdout_stderr(self._model_stdout, self._model_stderr, self._autoflush):
-            return self._chain.invoke({"question": self._question})
+            answer = self._chain.invoke({"question": self._question})
+        self._history.append((question, self._last_output))
+        return answer
 
-    def get_answer_stream(self, question: str) -> Iterator[str]:
+    def get_answer_stream(self, question: str, *, web: bool = False) -> Iterator[str]:
         """
         Get the answer from llm based on context and user's question
         Args:
             question (str): user's question
+            web (bool): answer from a web search instead of the notes
         Returns:
             Iterator[str]: llm answer
         """
-        self._question = question
-        self._query_keywords()
-        return self._stream()
+        self._ask(question, web)
+        return self._stream("new")
 
-    def _stream(self) -> Iterator[str]:
-        # yield inside the context manager: the stream is lazy, so generation happens while iterating
-        with store_stdout_stderr(self._model_stdout, self._model_stderr, self._autoflush):
-            yield from self._chain.stream({"question": self._question})
+    def continue_stream(self) -> Iterator[str]:
+        """Continue the last answer (e.g. when it was cut off at max_tokens)."""
+        if not self._can_continue() or not self._history:
+            msg = "No answer to continue"
+            raise ValueError(msg)
+        self._chain = self._continue_chain
+        return self._stream("continue")
+
+    def redo_stream(self) -> Iterator[str]:
+        """Answer the last question again, its previous answer is replaced."""
+        if not self._history:
+            msg = "No question to answer again"
+            raise ValueError(msg)
+        self._ask(self._history[-1][0], self._last_web, redo=True)
+        return self._stream("redo")
+
+    def _stream(self, turn: str) -> Iterator[str]:
+        """Stream the chain, and record the turn ("new", "continue" or "redo") once it's generating, even if stopped."""
+        generations = self._generations
+        try:
+            # yield inside the context manager: the stream is lazy, so generation happens while iterating
+            with store_stdout_stderr(self._model_stdout, self._model_stderr, self._autoflush):
+                yield from self._chain.stream({"question": self._question})
+        finally:
+            if self._generations != generations:  # not if it failed before generating (e.g. the web search)
+                if turn == "new":
+                    self._history.append((self._question or "", self._last_output))
+                else:
+                    q, a = self._history.pop()
+                    self._history.append((q, a + self._last_output if turn == "continue" else self._last_output))
 
     def response_handler(self) -> ModelResponseHandler:
         """Get the response handler"""

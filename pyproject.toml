@@ -36,7 +36,6 @@ classifiers = [
 ]
 dependencies = [
   "beautifulsoup4>=4.14",
-  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "langchain-classic>=1.0",
   "langchain-core>=1.6",
   "langchain-huggingface>=1.2",
@@ -47,7 +46,6 @@ dependencies = [
   "pyyaml>=6.0.3",
   "requests>=2.33",
   "sentence-transformers>=6.0",
-  "spacy>=3.8",
   "sqlalchemy[asyncio]>=2.1",
   "tqdm>=4.67",
   "unstructured[md]>=0.27",

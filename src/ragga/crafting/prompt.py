@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,7 @@ from langchain_core.prompts import (
     PromptTemplate,
 )
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+from llama_cpp.llama_types import ChatCompletionRequestMessage
 
 from ragga.core.config import Config, Configurable
 
@@ -47,11 +49,21 @@ Output:"""
 
 simple_prompt_phi2 = PromptTemplate.from_template(simple_template_phi2)
 
+# earlier (question, answer) turns of a conversation, oldest first
+History = Sequence[tuple[str, str]]
+
+
+def _escape(text: str) -> str:
+    """Make literal text safe to put in a PromptTemplate (f-string format)."""
+    return text.replace("{", "{{").replace("}", "}}")
+
 
 class Prompt(ABC, Configurable):
     """Base prompt"""
 
     _config_key = "prompt"
+    # whether get_prompt(history=...) puts earlier turns in the prompt, prompts without it are single-turn
+    supports_history: bool = False
 
     @property
     def user_name(self):
@@ -214,39 +226,28 @@ class TinyLlamaChatPrompt(Prompt):
 
     _default_config = MappingProxyType({})
 
-    def get_prompt(self, **kwargs) -> PromptTemplate:
-        if kwargs.get("docs"):
-            return PromptTemplate.from_template(
-                "<|system|>\n"
-                "You are a friendly and helpful AI assistant. "
-                "Answer the user succinctly using the following document extracts:\n"
-                "[DATA]\n"
-                "{context}\n"
-                "[/DATA]</s>\n"
-                "<|user|>\n"
-                "{question}</s>\n"
-                "<|assistant|>"
-            )
-        elif kwargs.get("web"):
-            return PromptTemplate.from_template(
-                "<|system|>\n"
-                "You are a friendly and helpful AI assistant. "
-                "Answer the user succinctly using the following search results:\n"
-                "[DATA]\n"
-                "{context}\n"
-                "[/DATA]</s>\n"
-                "<|user|>\n"
-                "{question}</s>\n"
-                "<|assistant|>"
-            )
+    supports_history = True
 
-        return PromptTemplate.from_template(
-            "<|system|>\n"
-            "You are a friendly and helpful AI assistant. Answer the user succinctly.</s>\n"
-            "<|user|>\n"
-            "{context}{question}</s>\n"
-            "<|assistant|>"
-        )
+    def get_prompt(self, history: History = (), **kwargs) -> PromptTemplate:
+        if kwargs.get("docs") or kwargs.get("web"):
+            source = {
+                (True, False): "document extracts",
+                (False, True): "search results",
+                (True, True): "search results and document extracts",
+            }[bool(kwargs.get("docs")), bool(kwargs.get("web"))]
+            system = (
+                "You are a friendly and helpful AI assistant. "
+                f"Answer the user succinctly using the following {source}:\n"
+                "[DATA]\n"
+                "{context}\n"
+                "[/DATA]"
+            )
+            user = "{question}"
+        else:
+            system = "You are a friendly and helpful AI assistant. Answer the user succinctly."
+            user = "{context}{question}"
+        turns = "".join(f"<|user|>\n{_escape(q)}</s>\n<|assistant|>\n{_escape(a)}</s>\n" for q, a in history)
+        return PromptTemplate.from_template(f"<|system|>\n{system}</s>\n{turns}<|user|>\n{user}</s>\n<|assistant|>")
 
 
 class Llama2ChatPrompt(Prompt):
@@ -259,23 +260,31 @@ class Llama2ChatPrompt(Prompt):
 
         {{ user_message }} [/INST]
 
+    Later turns follow as `{{ answer }} </s><s>[INST] {{ user_message }} [/INST]`.
     The BOS token (<s>) is added by llama.cpp, so it's not part of the template.
     """
 
     _default_config = MappingProxyType({})
 
+    supports_history = True
+
     _template = "[INST] <<SYS>>\n{system}\n<</SYS>>\n\n{user} [/INST]"
 
-    def get_prompt(self, **kwargs) -> PromptTemplate:
+    def get_prompt(self, history: History = (), **kwargs) -> PromptTemplate:
         """Get the prompt
         Args:
+            history: Earlier (question, answer) turns, oldest first.
             docs: Whether to include the docs in the prompt.
             web: Whether to include the web search in the prompt.
         Returns:
             Constructed prompt. Accepts a "context" variable if docs or web is True.
         """
         if kwargs.get("docs") or kwargs.get("web"):
-            source = "documents" if kwargs.get("docs") else "search results"
+            source = {
+                (True, False): "documents",
+                (False, True): "search results",
+                (True, True): "search results and documents",
+            }[bool(kwargs.get("docs")), bool(kwargs.get("web"))]
             system = (
                 "You are a friendly and helpful AI assistant. "
                 f"Answer the user succinctly using the following {source}:\n"
@@ -283,14 +292,18 @@ class Llama2ChatPrompt(Prompt):
                 "{context}\n"
                 "[/DATA]"
             )
-            return PromptTemplate.from_template(self._template.format(system=system, user="{question}"))
-
-        return PromptTemplate.from_template(
-            self._template.format(
-                system="You are a friendly and helpful AI assistant. Answer the user succinctly.",
-                user="{context}{question}",
-            )
-        )
+            user = "{question}"
+        else:
+            system = "You are a friendly and helpful AI assistant. Answer the user succinctly."
+            user = "{context}{question}"
+        if not history:
+            return PromptTemplate.from_template(self._template.format(system=system, user=user))
+        (first_q, first_a), *rest = history
+        text = self._template.format(system=system, user=_escape(first_q))
+        for q, a in rest:
+            text += f" {_escape(first_a)} </s><s>[INST] {_escape(q)} [/INST]"
+            first_a = a
+        return PromptTemplate.from_template(f"{text} {_escape(first_a)} </s><s>[INST] {user} [/INST]")
 
 
 class GGUFChatPrompt(Prompt):
@@ -302,6 +315,8 @@ class GGUFChatPrompt(Prompt):
     """
 
     _default_config = MappingProxyType({})
+
+    supports_history = True
 
     _system = "You are a friendly and helpful AI assistant. Answer the user succinctly."
     # sentinels survive template rendering, then become prompt template variables
@@ -323,23 +338,36 @@ class GGUFChatPrompt(Prompt):
         eos_token = llm._model.token_get_text(eos_id) if eos_id != -1 else ""
         self._formatter = Jinja2ChatFormatter(template=template, eos_token=eos_token, bos_token=self._bos_token)
 
-    def _render(self, system: str, user: str) -> str:
+    def _render(self, system: str, history: History, user: str) -> str:
         if self._formatter is None:
             msg = f"{self.__class__.__name__} needs a model, create the Generator before calling get_prompt."
             raise ValueError(msg)
+        turns: list[ChatCompletionRequestMessage] = []
+        for q, a in history:
+            turns += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
+        turns.append({"role": "user", "content": user})
         try:
-            text = self._formatter(
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}]
-            ).prompt
+            text = self._formatter(messages=[{"role": "system", "content": system}, *turns]).prompt
         except ValueError:  # templates without a system role raise via raise_exception
-            text = self._formatter(messages=[{"role": "user", "content": f"{system}\n\n{user}"}]).prompt
+            first = history[0][0] if history else user
+            turns[0] = {"role": "user", "content": f"{system}\n\n{first}"}
+            text = self._formatter(messages=turns).prompt
         # llama.cpp adds BOS itself when tokenizing
         if self._bos_token and text.startswith(self._bos_token):
             text = text[len(self._bos_token) :]
         return text
 
-    def get_prompt(self, **kwargs) -> PromptTemplate:
-        if kwargs.get("docs"):
+    def get_prompt(self, history: History = (), **kwargs) -> PromptTemplate:
+        if kwargs.get("docs") and kwargs.get("web"):
+            system = (
+                f"{self._system} Answer from the web search results and the user's personal notes below. The search "
+                "results come first, then extracts from the notes grouped by note, each starting with "
+                "'## <note title> (<folder>)'. Only use the notes that are relevant, and say whether your answer comes "
+                "from the web or from which notes.\n"
+                f"[DATA]\n{self._context_marker}\n[/DATA]"
+            )
+            user = self._question_marker
+        elif kwargs.get("docs"):
             system = (
                 f"{self._system} Answer from the user's personal notes below. Extracts are grouped by note, each "
                 "starting with '## <note title> (<folder>)', and '[...]' marks skipped text. Mention which notes you "
@@ -355,6 +383,6 @@ class GGUFChatPrompt(Prompt):
         else:
             system = self._system
             user = self._context_marker + self._question_marker
-        text = self._render(system, user).replace("{", "{{").replace("}", "}}")
+        text = _escape(self._render(system, history, user))
         text = text.replace(self._context_marker, "{context}").replace(self._question_marker, "{question}")
         return PromptTemplate.from_template(text)

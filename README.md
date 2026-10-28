@@ -9,6 +9,7 @@
 - [RAGGA: Retrieval Augmented Generation General Assistant](#ragga-retrieval-augmented-generation-general-assistant)
   - [RAGGA](#ragga)
   - [Example Usage](#example-usage)
+    - [Chatting](#chatting)
   - [Installation](#installation)
     - [Prerequisites](#prerequisites)
     - [Install from a release](#install-from-a-release)
@@ -23,7 +24,7 @@
 
 What is this? Load quantized LLMs and run them on your local devices. Interact with your own notes (currently markdown notes are supported by default) and ask questions about what you have written and get relevant answers from what you have written! Recommended model is TinyLlama-chat https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/blob/main/README.md based on its speed of token generation and it's low system requirements. Try the 8-bit quantized model to start with and if that's still too beefy you can always try 5, 4, etc.
 
-Basically, RAGGA is an local LLM based AI assistant that cares about your privacy, and does not require running things via untrusted third party APIs. The one exception is the web search feature, which can be completely disabled, so nothing ever leaves your system. Telemetry in
+Basically, RAGGA is an local LLM based AI assistant that cares about your privacy, and does not require running things via untrusted third party APIs. The one exception is the optional web search (off by default, and it can use your own [SearXNG](#chatting) instance), so nothing ever leaves your system unless you ask it to. Telemetry in
 dependencies (`unstructured`, Hugging Face Hub) is switched off when RAGGA is imported (`DO_NOT_TRACK=1`), and the test
 suite fails if anything tries to reach the network.
 
@@ -52,6 +53,36 @@ Defaults are in [`src/ragga/config.yaml`](src/ragga/config.yaml). Copy it, chang
 How notes are searched: each note is split into ~1000 character chunks, each labelled with the note's title and folder.
 A question is matched against them with both keyword (BM25) and embedding search, and the best chunks are given to the
 LLM grouped by note, so it can tell you which notes it used.
+
+### Chatting
+
+Follow-up questions see the conversation so far ("and what did I decide about the second one?"). Each answer gets
+fresh note excerpts, found with your question together with the previous one. Earlier answers are kept as text only.
+Everything has to fit in the model's context (`--context-length`, default 8192 tokens): the conversation gets at most
+`--history-tokens` of it (`generator.history_tokens`, default 2048, 0 turns follow-ups off). When it no longer fits,
+the oldest messages are forgotten first and RAGGA tells you so. Use `/reset` to start over on a new topic.
+
+| Command | |
+|---|---|
+| `/web <query>` | answer from web search results plus your notes (only with `--web` or `--searxng`) |
+| `/continue` | continue the last answer, e.g. when it was cut off at `--max-tokens` |
+| `/redo` | answer the last question again |
+| `/reset`, `/new` | start a new conversation |
+| `/history` | show the conversation so far |
+| `/help` | list the commands |
+| `/exit`, `/quit` | quit (or Ctrl-D) |
+
+Ctrl-C stops an answer without quitting. The input line supports the usual editing keys (arrows, Ctrl-W, Ctrl-A/E,
+up/down for earlier input) and Tab completes commands.
+
+Web search is off unless you start RAGGA with `--web` (or set `web.enabled`). A `/web` answer uses the top search
+results, then fills the rest of the context with your best-matching notes. Only the text after `/web` is sent to the
+search engine, never your notes or the rest of the conversation.
+
+The default engine is DuckDuckGo. For more privacy, use a [SearXNG](https://docs.searxng.org) instance, ideally one
+you host yourself. Start RAGGA with `--searxng http://localhost:8888` (this implies `--web`), or set `web.engine:
+searxng` and `web.searxng_url` in your config. RAGGA uses SearXNG's JSON API, so the instance's `settings.yml` needs
+`json` under `search.formats`.
 
 For use as a library, see [`tinyllama_example.py`](tinyllama_example.py).
 

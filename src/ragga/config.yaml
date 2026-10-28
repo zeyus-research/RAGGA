@@ -32,9 +32,11 @@ retriever:
 
 generator:
   llm_path: null # path to a GGUF chat model (or use `ragga -m model.gguf`)
-  context_length: 8192 # tokens; the notes, your question and the answer all have to fit in this
+  context_length: 8192 # tokens; the notes, the conversation, your question and the answer all have to fit in this
   temperature: 0.7
   max_tokens: 1024 # maximum length of an answer
+  # tokens of earlier conversation kept so follow-up questions have context (oldest turns are dropped first), 0: none
+  history_tokens: 2048
   # layers to offload to the GPU: -1 = all (ignored when llama-cpp-python was built without GPU support).
   # If the model doesn't fit in GPU memory, set a lower number, or use a smaller quantization / context_length.
   gpu_layers: -1
@@ -54,6 +56,13 @@ dataset:
       include_metadata: True
       languages: ["en"] # language can be "auto", or a list of known languages
       chunking_strategy: "by_title" # "by_title" or null (no chunking)
+
+# "/web <query>" in the chat. Only the query is sent to the search engine, never your notes.
+web:
+  enabled: False # or use `ragga --web`
+  engine: "duckduckgo" # "duckduckgo", or "searxng" for a SearXNG instance (more private if you host it yourself)
+  searxng_url: null # e.g. "http://localhost:8888", the instance must allow JSON results (search.formats in settings.yml)
+  max_results: 5
 
 # Only used by ChatPrompt (GGUFChatPrompt, the default, uses the chat template embedded in the model file)
 prompt:
