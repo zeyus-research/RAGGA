@@ -166,7 +166,8 @@ class Generator(Configurable):
 
         default_kwargs = {
             "streaming": True,
-            "verbose": True,
+            # llama.cpp logs (including per-token debug lines on GPU) go to stderr when True
+            "verbose": False,
             "use_mlock": False,
             "n_threads": None,
             "seed": -1,
@@ -200,6 +201,8 @@ class Generator(Configurable):
                 "Autoflush disabled, please remember to flush stdout and stderr "
                 f"buffers maunally with {self.__class__.__name__}.flush_stdout_stderr()"
             )
+        # index the notes (on the encoder's index device) before the LLM claims the GPU
+        vectorstore.finish_indexing()
         with store_stdout_stderr(self._model_stdout, self._model_stderr, self._autoflush):
             # load Llama from local file
             model_kwargs = dict(self.config[self._config_key]["model_kwargs"])
@@ -217,6 +220,7 @@ class Generator(Configurable):
                 model_kwargs=model_kwargs,
                 generate_kwargs=generate_kwargs,
             )
+        prompt.bind_llm(self._llm.client)
         self._llm_with_wrap: Runnable[LanguageModelInput, str | BaseMessage]
         # self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
         #     self.config[self._config_key]["hf_tokenizer"]
@@ -333,9 +337,12 @@ class Generator(Configurable):
 
     def _prepare_query(self, x: str) -> str:
         """
-        Prepare the query for the retriever, limiting to keywords that are hopefully relevant.
+        Prepare the query for the retriever. Notes are searched with the full question (BM25 discounts common words
+        and embeddings work best on whole sentences), web searches with the extracted keywords.
         """
-        # Get relevant keywords
+        if not self._web_search:
+            logging.info(f"Searching notes for: {x}")
+            return x
         if self._keywords["what"] is not None:
             if self._keywords["known"] or self._keywords["where"] is None:
                 logging.info(f"Using keyword {self._keywords['what']} as query")
@@ -369,16 +376,44 @@ class Generator(Configurable):
         template: str = self._template.format(question=self._question, context="")
         template_tokens: int = self._llm.get_num_tokens(template)
         available_tokens: int = self._max_prompt_length - template_tokens
-        context: str = "- " + "\n- ".join([d.page_content.strip() for d in ctx])
-        context_tok: list[int] = self._llm.client.tokenize(context.encode())
-        context_length = len(context_tok)
-        if context_length > available_tokens:
-            logging.debug("Context too long, truncating...")
-            context_tok = context_tok[-available_tokens:]
-            bcontext: bytes = self._llm.client.detokenize(context_tok)
-            context = bcontext.decode()
+        # add whole notes, most relevant first, until the context is full
+        blocks: list[str] = []
+        for block in self._group_by_note(ctx):
+            block_tokens = self._llm.get_num_tokens(block) + 2
+            if block_tokens > available_tokens:
+                if not blocks:  # the best match alone is too long: keep its start
+                    logging.debug("Context too long, truncating...")
+                    tokens = self._llm.client.tokenize(block.encode(), add_bos=False)[: max(available_tokens, 0)]
+                    blocks.append(self._llm.client.detokenize(tokens).decode(errors="ignore"))
+                break
+            blocks.append(block)
+            available_tokens -= block_tokens
         logging.debug("Condensed context calculated")
-        return context
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def _group_by_note(docs: list[Document]) -> list[str]:
+        """One text block per note, in order of each note's best match, with its chunks in document order."""
+        notes: dict[str, list[Document]] = {}
+        for i, doc in enumerate(docs):
+            notes.setdefault(doc.metadata.get("source") or f"#{i}", []).append(doc)
+        blocks = []
+        for chunks in notes.values():
+            chunks.sort(key=lambda d: d.metadata.get("start_index", 0))
+            header = chunks[0].metadata.get("header", "")
+            body, end = "", None
+            for d in chunks:
+                text = d.page_content.removeprefix(header)
+                start = d.metadata.get("start_index")
+                if end is not None and start is not None and start < end:  # overlaps the previous chunk
+                    body += text[end - start :]
+                else:
+                    body += ("\n[...]\n" if body else "") + text
+                if start is not None:
+                    end = max(end or 0, start + len(text))
+            title = header.strip().removeprefix("Note: ")
+            blocks.append(f"## {title}\n{body.strip()}" if title else body.strip())
+        return blocks
 
     @property
     def last_docs(self) -> list[Document] | None:

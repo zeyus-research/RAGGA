@@ -29,6 +29,7 @@ class NumpyVectorStore(VectorStore):
         self._docs: dict[str, Document] = {}
         self._vectors: np.ndarray | None = None  # (n, dim) float32, row i belongs to self._ids[i]
         self._sq_norms: np.ndarray | None = None  # squared row norms, so a search is one matrix-vector product
+        self.revision = 0  # bumped on every change, so derived indexes (e.g. BM25) know when to rebuild
 
     @property
     def embeddings(self) -> Embeddings:
@@ -37,7 +38,13 @@ class NumpyVectorStore(VectorStore):
     def __len__(self) -> int:
         return len(self._ids)
 
+    @property
+    def documents(self) -> list[Document]:
+        """All documents, in the same order as the vectors."""
+        return [self._docs[i] for i in self._ids]
+
     def _set_vectors(self, vectors: np.ndarray | None) -> None:
+        self.revision += 1
         self._vectors = vectors
         self._sq_norms = None if vectors is None else np.einsum("ij,ij->i", vectors, vectors)
 

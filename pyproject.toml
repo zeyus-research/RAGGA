@@ -53,6 +53,9 @@ dependencies = [
   "unstructured[md]>=0.27",
 ]
 
+[project.scripts]
+ragga = "ragga.cli:main"
+
 [project.optional-dependencies]
 # Pick exactly one of `cpu` / `gpu` (NVIDIA CUDA) / `rocm` (AMD, Linux only);
 # they select different PyTorch builds. macOS always uses the default PyPI torch (MPS).
@@ -111,7 +114,7 @@ override-dependencies = [
 ]
 
 [tool.uv.build-backend]
-source-include = ["tests/**", "config.yaml"]
+source-include = ["tests/**"]
 
 [tool.uv.sources]
 torch = [

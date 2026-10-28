@@ -5,6 +5,7 @@ import os
 import pytest
 
 from ragga import Config, Encoder, Generator, MarkdownDataset, VectorDatabase
+from ragga.core.config import DEFAULT_CONFIG_PATH
 from ragga.crafting.prompt import TinyLlamaChatPrompt
 
 MODEL = os.environ.get("RAGGA_TEST_MODEL")
@@ -19,10 +20,12 @@ def test_answers_from_notes(tmp_path):
     notes = tmp_path / "notes"
     notes.mkdir()
     (notes / "pets.md").write_text("# Pets\n\nMy cat is called Biscuit and she is orange.\n")
-    conf = Config(config_path="config.yaml")
+    conf = Config(config_path=DEFAULT_CONFIG_PATH)
     conf.merge(
         {
             "encoder": {
+                "model_path": "sentence-transformers/all-MiniLM-l6-v2",
+                "index_device": None,
                 "cache_dir": str(tmp_path / "cache"),
                 "model_kwargs": {"device": os.environ.get("RAGGA_TEST_DEVICE", "cpu")},
             },

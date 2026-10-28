@@ -39,7 +39,7 @@ def test_index_search_and_reload(open_db):
 
     query = "Sonification turns data into sound."
     hits = db.db.similarity_search(query, k=1)
-    assert hits[0].page_content == query
+    assert hits[0].page_content == query  # no title metadata, so no header
     assert query in db.get_similar_docs(query, k=1)
     assert len(db.retriever.invoke(query)) == 2
 
@@ -70,8 +70,58 @@ def test_index_from_older_version_is_rebuilt(open_db, config):
     db = open_db()
     db.documents = make_docs()
     _ = db.db
-    for f in (Path(config["retriever"]["cache_dir"]) / ".vectors").iterdir():
+    for f in (Path(config["retriever"]["cache_dir"]) / ".vectors").glob("*/*"):
         f.unlink()
     rebuilt = open_db()
     rebuilt.documents = make_docs()
     assert len(rebuilt.db.similarity_search("x", k=10)) == 2
+
+
+def make_notes() -> list[Document]:
+    return [
+        Document(
+            page_content="A game paradigm for group joint action research.",
+            metadata={"source": "data/PhD/RiseTogether.md", "title": "RiseTogether", "folder": "PhD"},
+        ),
+        Document(page_content="Bread needs flour and water.", metadata={"source": "data/bread.md", "title": "bread"}),
+        Document(page_content="Notes about sound and data.", metadata={"source": "data/sound.md", "title": "sound"}),
+    ]
+
+
+def test_passages_carry_note_header(open_db):
+    db = open_db()
+    db.documents = make_notes()
+    first = db.passages[0]
+    assert first.page_content.startswith("Note: RiseTogether (PhD)\n\n")
+    assert first.metadata["header"] == "Note: RiseTogether (PhD)\n\n"
+    assert first.metadata["start_index"] == 0
+    assert db.passages[1].page_content.startswith("Note: bread\n\n")
+
+
+def test_hybrid_retriever_finds_note_by_name(open_db):
+    db = open_db()
+    db.documents = make_notes()
+    hits = db.retriever.invoke("Tell me about Rise Together")
+    assert hits[0].metadata["title"] == "RiseTogether"
+
+
+def test_vector_search_option_and_bad_option(open_db, config):
+    config["retriever"]["search"] = "vector"
+    db = open_db()
+    db.documents = make_notes()
+    assert len(db.retriever.invoke("anything")) == 2
+    config["retriever"]["search"] = "nope"
+    with pytest.raises(ValueError, match=r"retriever\.search"):
+        _ = open_db().retriever
+
+
+def test_index_is_per_model_and_chunking(open_db, config, fake_encoder):
+    db = open_db()
+    db.documents = make_docs()
+    _ = db.db
+    config["retriever"]["splitting"]["chunk_size"] = 128
+    rechunked = open_db()
+    assert not rechunked.loaded_from_disk
+    config["retriever"]["splitting"]["chunk_size"] = 64
+    fake_encoder.model_name = "other"
+    assert not open_db().loaded_from_disk

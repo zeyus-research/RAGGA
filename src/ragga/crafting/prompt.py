@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from langchain_core.prompts import (
     BasePromptTemplate,
@@ -8,8 +9,12 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
     PromptTemplate,
 )
+from llama_cpp.llama_chat_format import Jinja2ChatFormatter
 
 from ragga.core.config import Config, Configurable
+
+if TYPE_CHECKING:
+    from llama_cpp import Llama
 
 # temporary placeholder...we need local preprocessing
 # to handle keywords etc (search? dates?)
@@ -55,6 +60,9 @@ class Prompt(ABC, Configurable):
     @property
     def ai_name(self):
         return self.config[self._config_key]["AI_name"]
+
+    def bind_llm(self, llm: "Llama") -> None:
+        """Called by the generator once the model is loaded, for prompts that depend on the model."""
 
     @abstractmethod
     def get_prompt(self, **kwargs) -> BasePromptTemplate:
@@ -283,3 +291,70 @@ class Llama2ChatPrompt(Prompt):
                 user="{context}{question}",
             )
         )
+
+
+class GGUFChatPrompt(Prompt):
+    """Prompt using the chat template embedded in the GGUF model file (`tokenizer.chat_template`).
+
+    Works for any chat model that ships a template (Mistral, Llama 3, Qwen, Gemma, TinyLlama...).
+    The template is read when the generator binds the loaded model, so `get_prompt` can only be
+    called after the `Generator` has been created.
+    """
+
+    _default_config = MappingProxyType({})
+
+    _system = "You are a friendly and helpful AI assistant. Answer the user succinctly."
+    # sentinels survive template rendering, then become prompt template variables
+    _context_marker = "\x00RAGGA_CONTEXT\x00"
+    _question_marker = "\x00RAGGA_QUESTION\x00"
+
+    def __init__(self, conf: Config) -> None:
+        super().__init__(conf)
+        self._formatter: Jinja2ChatFormatter | None = None
+        self._bos_token = ""
+
+    def bind_llm(self, llm: "Llama") -> None:
+        template = llm.metadata.get("tokenizer.chat_template")
+        if not template:
+            msg = "The model has no embedded chat template (tokenizer.chat_template), use a model specific prompt."
+            raise ValueError(msg)
+        bos_id, eos_id = llm.token_bos(), llm.token_eos()
+        self._bos_token = llm._model.token_get_text(bos_id) if bos_id != -1 else ""
+        eos_token = llm._model.token_get_text(eos_id) if eos_id != -1 else ""
+        self._formatter = Jinja2ChatFormatter(template=template, eos_token=eos_token, bos_token=self._bos_token)
+
+    def _render(self, system: str, user: str) -> str:
+        if self._formatter is None:
+            msg = f"{self.__class__.__name__} needs a model, create the Generator before calling get_prompt."
+            raise ValueError(msg)
+        try:
+            text = self._formatter(
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}]
+            ).prompt
+        except ValueError:  # templates without a system role raise via raise_exception
+            text = self._formatter(messages=[{"role": "user", "content": f"{system}\n\n{user}"}]).prompt
+        # llama.cpp adds BOS itself when tokenizing
+        if self._bos_token and text.startswith(self._bos_token):
+            text = text[len(self._bos_token) :]
+        return text
+
+    def get_prompt(self, **kwargs) -> PromptTemplate:
+        if kwargs.get("docs"):
+            system = (
+                f"{self._system} Answer from the user's personal notes below. Extracts are grouped by note, each "
+                "starting with '## <note title> (<folder>)', and '[...]' marks skipped text. Mention which notes you "
+                "used, and say so if the notes don't cover the question rather than guessing.\n"
+                f"[DATA]\n{self._context_marker}\n[/DATA]"
+            )
+            user = self._question_marker
+        elif kwargs.get("web"):
+            system = (
+                f"{self._system} Use the following search results to answer:\n[DATA]\n{self._context_marker}\n[/DATA]"
+            )
+            user = self._question_marker
+        else:
+            system = self._system
+            user = self._context_marker + self._question_marker
+        text = self._render(system, user).replace("{", "{{").replace("}", "}}")
+        text = text.replace(self._context_marker, "{context}").replace(self._question_marker, "{question}")
+        return PromptTemplate.from_template(text)

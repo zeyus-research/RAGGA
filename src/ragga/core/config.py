@@ -5,6 +5,8 @@ from types import MappingProxyType
 
 import yaml
 
+DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+
 
 def tuple_constructor(loader, node):
     # Load the sequence of values from the YAML node
@@ -36,8 +38,9 @@ class Config:
         elif config is not None:
             self.config = config
         else:
-            logging.warning("No config file or config dictionary provided. Using default config.")
-            self.config = self._load_config(Path.cwd() / "config.yaml")
+            local = Path.cwd() / "config.yaml"
+            logging.warning(f"No config given, using {local if local.is_file() else DEFAULT_CONFIG_PATH}")
+            self.config = self._load_config(local if local.is_file() else DEFAULT_CONFIG_PATH)
 
     @staticmethod
     def _load_config(config_path: str | Path) -> dict:

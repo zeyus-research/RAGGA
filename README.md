@@ -29,13 +29,31 @@ suite fails if anything tries to reach the network.
 
 ## Example Usage
 
-Download one of the TinyLlama-chat quantized model (e.g. [8-bit quantized TinyLlama-1.1B-Chat-v1.0-GGUF](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/blob/main/tinyllama-1.1b-chat-v1.0.Q8_0.gguf)) and copy it to the models directory.
+Download a GGUF chat model (any model with a chat template works, e.g. [TinyLlama-1.1B-Chat](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/blob/main/tinyllama-1.1b-chat-v1.0.Q8_0.gguf) for low-end machines, or a 7-24B model if you have the GPU memory), install RAGGA (see [Installation](#installation)) and point it at your notes:
 
-Install RAGGA (see [Installation](#installation)).
+```console
+ragga -m models/your-model.gguf -n ~/notes                       # chat
+ragga -m models/your-model.gguf -n ~/notes -q "What is RiseTogether?"   # one question
+```
 
-Edit the [`config.yaml`](config.yaml) file to point to the model you downloaded in the `generator:` `llm_path:`, and update the `dataset:` `path:` key to point to your directory containing markdown files.
+or straight from GitHub without installing (llama.cpp is then built for the CPU):
 
-Run the [`tinyllama_example.py`](tinyllama_example.py) script to try it out.
+```console
+uvx --from git+https://github.com/zeyus/RAGGA ragga -m model.gguf -n ~/notes
+```
+
+The first run embeds all notes (a few minutes for a large vault, much faster with a GPU). After that only new or
+changed notes are embedded. Embeddings and the search index are cached in your user cache folder (`~/.cache/ragga` on
+Linux), use `--cache-dir` to change that or `--no-cache` to keep nothing on disk. See `ragga --help` for all options.
+
+Defaults are in [`src/ragga/config.yaml`](src/ragga/config.yaml). Copy it, change what you need and pass it with
+`ragga -c my-config.yaml`; command line options override the file.
+
+How notes are searched: each note is split into ~1000 character chunks, each labelled with the note's title and folder.
+A question is matched against them with both keyword (BM25) and embedding search, and the best chunks are given to the
+LLM grouped by note, so it can tell you which notes it used.
+
+For use as a library, see [`tinyllama_example.py`](tinyllama_example.py).
 
 ## Installation
 
@@ -84,7 +102,7 @@ gh attestation verify ragga-0.1.0-py3-none-any.whl --repo zeyus/RAGGA
 ```console
 git clone https://github.com/zeyus/RAGGA.git && cd RAGGA
 uv sync --extra cpu        # or --extra gpu / --extra rocm
-uv run --extra cpu python tinyllama_example.py
+uv run --extra cpu ragga -m models/your-model.gguf -n ~/notes
 ```
 
 Always pass the same `--extra` to `uv run` (or use `uv run --no-sync`), otherwise uv re-syncs to the default PyPI
@@ -94,7 +112,7 @@ torch build. Dependencies are locked with hashes in `uv.lock`, and uv is configu
 ### GPU acceleration for llama.cpp
 
 The PyTorch extra only accelerates the embedding model. To offload the LLM to a GPU, rebuild `llama-cpp-python` with
-the matching backend and set `generator.gpu_layers` in `config.yaml` (`-1` = all layers):
+the matching backend and offload with `generator.gpu_layers` (`-1` = all layers, the default; or `ragga --gpu-layers N`):
 
 ```console
 # NVIDIA (CUDA toolkit installed)

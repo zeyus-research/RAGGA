@@ -3,7 +3,7 @@ from types import MappingProxyType
 import pytest
 
 from ragga import Config
-from ragga.core.config import Configurable, deep_update
+from ragga.core.config import DEFAULT_CONFIG_PATH, Configurable, deep_update
 
 
 class Thing(Configurable):
@@ -25,9 +25,16 @@ def test_missing_file(tmp_path):
         Config(config_path=tmp_path / "nope.yaml")
 
 
-def test_repo_config_loads():
-    conf = Config(config_path="config.yaml")
+def test_default_config_loads():
+    conf = Config(config_path=DEFAULT_CONFIG_PATH)
     assert {"encoder", "retriever", "generator", "dataset", "prompt"} <= set(conf.config)
+
+
+def test_no_config_prefers_local_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert Config().config == Config(config_path=DEFAULT_CONFIG_PATH).config
+    (tmp_path / "config.yaml").write_text("generator:\n  llm_path: local.gguf\n")
+    assert Config()["generator"]["llm_path"] == "local.gguf"
 
 
 def test_deep_update_merges_nested_without_mutating():

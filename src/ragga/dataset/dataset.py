@@ -55,7 +55,7 @@ class MarkdownDataset(Configurable):
         files = self._find_files(path, recursive=conf["recursive"])
         workers = 4 if conf["use_multithreading"] else 1
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            results = pool.map(self._load_file, files)
+            results = pool.map(lambda f: self._load_file(f, path), files)
             if conf["show_progress"]:
                 results = tqdm(results, total=len(files), desc="Loading notes", unit="file")
             self._documents = [doc for docs in results for doc in docs]
@@ -71,11 +71,13 @@ class MarkdownDataset(Configurable):
             f for f in candidates if f.is_file() and not any(part.startswith(".") for part in f.relative_to(path).parts)
         )
 
-    def _load_file(self, file: Path) -> list[Document]:
+    def _load_file(self, file: Path, root: Path) -> list[Document]:
         """Parse one Markdown file with unstructured, either as one document ("single") or one per element."""
         loader_kwargs = self.config[self._config_key]["loader_kwargs"]
         elements = partition_md(filename=str(file), **loader_kwargs.get("unstructured_kwargs", {}))
-        source = {"source": str(file)}
+        # the note title and folder give chunks their context, e.g. "RiseTogether" in "10 PhD/RiseTogether"
+        folder = file.parent.relative_to(root).as_posix()
+        source = {"source": str(file), "title": file.stem, "folder": "" if folder == "." else folder}
         if loader_kwargs.get("mode", "single") == "elements":
             docs = []
             for element in elements:

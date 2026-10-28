@@ -18,6 +18,8 @@ def test_loads_markdown(tmp_path):
     assert len(docs) == 2
     assert any("sonification" in d.page_content for d in docs)
     assert all(d.metadata["source"].endswith(".md") for d in docs)
+    meta = {d.metadata["title"]: d.metadata["folder"] for d in docs}
+    assert meta == {"one": "", "two": "sub"}
 
 
 def test_missing_dir(tmp_path):

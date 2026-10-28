@@ -1,0 +1,66 @@
+# RAGGA default configuration. Copy this file, change what you need, and pass it with `ragga -c my-config.yaml`
+# (settings you leave out keep these defaults). Command line options override both.
+
+encoder:
+  # embedding model used to search your notes. bge-m3 is multilingual and much more accurate than small models;
+  # for a lighter (English only, ~90MB) alternative use "sentence-transformers/all-MiniLM-l6-v2"
+  model_path: "BAAI/bge-m3"
+  cache_embeddings: True
+  persistent_cache: True # if True, embeddings are cached in cache_dir, if False, they are cached in memory
+  cache_dir: ".cache"
+  # device used to embed (index) your notes: "auto" uses a GPU when torch can see one (CUDA, ROCm or Apple MPS).
+  # After indexing, the model moves to model_kwargs.device for queries, leaving the GPU to the LLM.
+  index_device: "auto"
+
+  model_kwargs:
+    device: "cpu" # device for search queries: "cpu" keeps GPU memory free for the LLM, and queries are fast anyway
+    model_kwargs:
+      torch_dtype: "float16" # used while indexing on a GPU (the CPU uses float32)
+
+  encode_kwargs:
+    normalize_embeddings: True # bge-m3 is trained for cosine similarity
+
+retriever:
+  splitting:
+    chunk_size: 1000 # characters per chunk
+    chunk_overlap: 150
+  num_docs: 12 # chunks given to the LLM (fewer are used if they don't fit in generator.context_length)
+  search: "hybrid" # "hybrid" (BM25 keywords + embeddings) or "vector" (embeddings only)
+  keyword_weight: 1.0 # hybrid only: weight of the keyword ranking relative to the embedding ranking
+  max_per_note: 4 # hybrid only: max chunks from one note, so one long note can't crowd out the rest (null: no limit)
+  cache_dir: ".cache"
+
+generator:
+  llm_path: null # path to a GGUF chat model (or use `ragga -m model.gguf`)
+  context_length: 8192 # tokens; the notes, your question and the answer all have to fit in this
+  temperature: 0.7
+  max_tokens: 1024 # maximum length of an answer
+  # layers to offload to the GPU: -1 = all (ignored when llama-cpp-python was built without GPU support).
+  # If the model doesn't fit in GPU memory, set a lower number, or use a smaller quantization / context_length.
+  gpu_layers: -1
+  n_batch: 512
+  model_kwargs: {} # extra llama_cpp.Llama() options (e.g. flash_attn, n_threads, type_k) or sampling (top_p, min_p)
+  search_kwargs: {}
+  autoflush: True # automatically clear the model stdout and stderr buffers, False to manually control flushing
+
+dataset:
+  path: "./data" # folder with your markdown notes (e.g. an Obsidian vault), or use `ragga -n ~/notes`
+  recursive: True
+  show_progress: True # show progress bar when loading dataset
+  use_multithreading: True
+  loader_kwargs:
+    mode: "single" # either "single" or "elements"
+    unstructured_kwargs:
+      include_metadata: True
+      languages: ["en"] # language can be "auto", or a list of known languages
+      chunking_strategy: "by_title" # "by_title" or null (no chunking)
+
+# Only used by ChatPrompt (GGUFChatPrompt, the default, uses the chat template embedded in the model file)
+prompt:
+  user_name: "User"
+  AI_name: "Assistant"
+  instruct_user: "Instruct" # usually "System", or "Instruct"
+  instructions: "You are a friendly, helpful AI assistant. Succinctly and truthfully answer the user's question "
+  pre_context: "using the following documents"
+  post_context: ""
+  user_query: "{question}"

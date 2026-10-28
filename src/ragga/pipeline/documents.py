@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import typing as t
 from pathlib import Path
@@ -6,12 +7,24 @@ from types import MappingProxyType
 from langchain_classic.indexes import SQLRecordManager
 from langchain_core.documents import Document
 from langchain_core.indexing import index
-from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
+from langchain_core.retrievers import BaseRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ragga.core.config import Config, Configurable
 from ragga.pipeline.encoder import Encoder
+from ragga.pipeline.retrieval import HybridRetriever
 from ragga.pipeline.vectorstore import NumpyVectorStore
+
+# bump when the way passages are built changes, so existing indexes are rebuilt
+PASSAGE_FORMAT_VERSION = 2
+
+
+def passage_header(metadata: dict[str, t.Any]) -> str:
+    """Note title and folder, put in front of every chunk so it carries the context of the note it came from."""
+    if not metadata.get("title"):
+        return ""
+    folder = metadata.get("folder")
+    return f"Note: {metadata['title']}" + (f" ({folder})" if folder else "") + "\n\n"
 
 
 class VectorDatabase(Configurable):
@@ -21,15 +34,18 @@ class VectorDatabase(Configurable):
     _default_config = MappingProxyType(
         {
             "splitting": {
-                "chunk_size": 256,
-                "chunk_overlap": 16,
+                "chunk_size": 1000,
+                "chunk_overlap": 150,
             },
-            "num_docs": 4,
+            "num_docs": 10,
+            "search": "hybrid",  # "hybrid" (BM25 keywords + vectors) or "vector"
+            "keyword_weight": 1.0,  # hybrid only: weight of the keyword ranking relative to the vector ranking
+            "max_per_note": 4,  # hybrid only: max chunks from one note, null for no limit
             "cache_dir": ".cache",
         }
     )
     _db: NumpyVectorStore | None = None
-    _retriever: VectorStoreRetriever | None = None
+    _retriever: BaseRetriever | None = None
     _passages: list[Document] | None = None
     _documents: list[Document]
     _db_is_stale: bool = True
@@ -39,16 +55,22 @@ class VectorDatabase(Configurable):
 
     def __init__(self, conf: Config, encoder: Encoder, namespace: str | None = None) -> None:
         super().__init__(conf)
+        splitting = self.config[self._config_key]["splitting"]
         self._text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.config[self._config_key]["splitting"]["chunk_size"],
-            chunk_overlap=self.config[self._config_key]["splitting"]["chunk_overlap"],
+            chunk_size=splitting["chunk_size"],
+            chunk_overlap=splitting["chunk_overlap"],
+            add_start_index=True,
         )
+        # one index per embedding model + chunking, so changing either builds a fresh index instead of mixing them
+        fingerprint = hashlib.sha256(
+            f"{encoder.model_name}|{splitting['chunk_size']}|{splitting['chunk_overlap']}|{PASSAGE_FORMAT_VERSION}".encode()
+        ).hexdigest()[:12]
         cache_dir = Path(self.config[self.key]["cache_dir"])
         self._index_db_path = cache_dir / ".record_index.db"
-        self._vector_db_path = cache_dir / ".vectors"
+        self._vector_db_path = cache_dir / ".vectors" / fingerprint
         self._encoder = encoder
         self._documents = []
-        self._namespace = namespace if namespace is not None else self._config_key
+        self._namespace = f"{namespace if namespace is not None else self._config_key}:{fingerprint}"
         self._record_manager = SQLRecordManager(
             namespace=self._namespace,
             db_url=f"sqlite:///{self._index_db_path}",
@@ -77,10 +99,13 @@ class VectorDatabase(Configurable):
             return []
         if self._passages is None or self._db_is_stale:
             self._passages = self._text_splitter.split_documents(self.documents)
+            for passage in self._passages:
+                passage.metadata["header"] = header = passage_header(passage.metadata)
+                passage.page_content = header + passage.page_content
         return self._passages
 
     @property
-    def db(self) -> VectorStore:
+    def db(self) -> NumpyVectorStore:
         if self._db is None or self._db_is_stale:
             self._create_db()
         if self._db is None:
@@ -134,7 +159,7 @@ class VectorDatabase(Configurable):
                 logging.info("Loading vector database from disk")
                 self._db = NumpyVectorStore.load(self._vector_db_path, self._encoder.embeddings)
                 self._loaded_from_disk = True
-                logging.warning(
+                logging.debug(
                     "Vector database loaded from disk: "
                     "No documents will exist in this object, but they will be available in the database."
                 )
@@ -175,13 +200,29 @@ class VectorDatabase(Configurable):
 
         return "\n".join(strdocs)
 
+    def finish_indexing(self) -> None:
+        """Index any pending documents, then let the encoder release the GPU (call before loading the LLM)."""
+        _ = self.db
+        self._encoder.finish_indexing()
+
     @property
-    def retriever(self) -> VectorStoreRetriever:
+    def retriever(self) -> BaseRetriever:
         if self._retriever is None:
-            self._retriever = self.db.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": self.config[self._config_key]["num_docs"]},
-            )
+            conf = self.config[self._config_key]
+            k = conf["num_docs"]
+            if conf["search"] == "hybrid":
+                self._retriever = HybridRetriever(
+                    store=self.db,
+                    k=k,
+                    fetch_k=max(50, 4 * k),
+                    keyword_weight=conf["keyword_weight"],
+                    max_per_source=conf["max_per_note"],
+                )
+            elif conf["search"] == "vector":
+                self._retriever = self.db.as_retriever(search_type="similarity", search_kwargs={"k": k})
+            else:
+                msg = f"Unknown retriever.search: {conf['search']!r}, use 'hybrid' or 'vector'"
+                raise ValueError(msg)
         return self._retriever
 
     @property

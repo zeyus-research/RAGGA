@@ -11,8 +11,13 @@ from ragga import Config
 class FakeEncoder:
     """Stands in for ragga.Encoder without downloading a sentence-transformers model."""
 
+    model_name = "fake"
+
     def __init__(self, size: int = 32) -> None:
         self.embeddings = DeterministicFakeEmbedding(size=size)
+
+    def finish_indexing(self) -> None:
+        pass
 
 
 @pytest.fixture
