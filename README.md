@@ -1,7 +1,6 @@
 # RAGGA: Retrieval Augmented Generation General Assistant
 
-[![PyPI - Version](https://img.shields.io/pypi/v/ragga.svg)](https://pypi.org/project/ragga)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ragga.svg)](https://pypi.org/project/ragga)
+⚠️⚠️ **NOTE: This project *IS NOT* on PyPi, someone squatted the package name and it's probably malware** ⚠️⚠️
 
 -----
 
