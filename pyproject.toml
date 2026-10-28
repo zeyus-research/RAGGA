@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.13.6,<0.14"]
+build-backend = "uv_build"
 
 [project]
 name = "ragga"
@@ -9,6 +9,7 @@ description = 'Retrieval Augmented Generation (RAG) - General Assistant'
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["rag", "llm", "llama.cpp", "langchain", "markdown", "notes"]
 authors = [
   { name = "zeyus (https://github.com/zeyus, https://zeyus.com/)" },
@@ -91,15 +92,8 @@ Documentation = "https://github.com/zeyus/RAGGA/blob/main/README.md"
 Issues = "https://github.com/zeyus/RAGGA/issues"
 Source = "https://github.com/zeyus/RAGGA"
 
-[tool.hatch.metadata]
-# needed for the spaCy model wheel (not published on PyPI)
-allow-direct-references = true
-
-[tool.hatch.build.targets.sdist]
-include = ["src/ragga", "tests", "config.yaml", "README.md", "LICENSE"]
-
 [tool.uv]
-required-version = ">=0.9"
+required-version = ">=0.13.6"
 default-groups = ["dev"]
 # Supply-chain cooldown: ignore anything published in the last week, so a
 # compromised release has time to be detected and yanked before we pick it up.
@@ -110,7 +104,16 @@ conflicts = [
 # Security floors that upstream pins would otherwise block:
 # - filelock<4 (pinned by unstructured) has CVE-2026-112907/112913/112940, fixed in 4.2.1.
 #   huggingface-hub's SoftFileLock fallback is affected. The plain FileLock API is unchanged in 4.x.
-override-dependencies = ["filelock>=4.2.1"]
+# - unstructured-client (the hosted Unstructured API client) is a hard dependency of unstructured but is only
+#   imported by its PDF / remote API partitioners. RAGGA only parses Markdown locally, so drop it, and with it pypdf,
+#   pypdfium2 etc. (the impossible marker is uv's documented way to remove a transitive dependency).
+override-dependencies = [
+  "filelock>=4.2.1",
+  "unstructured-client; sys_platform == 'never'",
+]
+
+[tool.uv.build-backend]
+source-include = ["tests/**", "config.yaml"]
 
 [tool.uv.sources]
 torch = [
