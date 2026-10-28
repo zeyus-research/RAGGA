@@ -107,6 +107,10 @@ exclude-newer = "7 days"
 conflicts = [
   [{ extra = "cpu" }, { extra = "gpu" }, { extra = "rocm" }],
 ]
+# Security floors that upstream pins would otherwise block:
+# - filelock<4 (pinned by unstructured) has CVE-2026-112907/112913/112940, fixed in 4.2.1.
+#   huggingface-hub's SoftFileLock fallback is affected. The plain FileLock API is unchanged in 4.x.
+override-dependencies = ["filelock>=4.2.1"]
 
 [tool.uv.sources]
 torch = [
