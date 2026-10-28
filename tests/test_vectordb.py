@@ -125,3 +125,13 @@ def test_index_is_per_model_and_chunking(open_db, config, fake_encoder):
     config["retriever"]["splitting"]["chunk_size"] = 64
     fake_encoder.model_name = "other"
     assert not open_db().loaded_from_disk
+
+
+def test_index_is_per_notes_folder(open_db, config):
+    config["dataset"] = {"path": "notes-a"}
+    db = open_db()
+    db.documents = make_docs()
+    _ = db.db
+    assert open_db().loaded_from_disk
+    config["dataset"] = {"path": "notes-b"}
+    assert not open_db().loaded_from_disk

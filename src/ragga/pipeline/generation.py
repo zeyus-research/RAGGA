@@ -231,8 +231,9 @@ class Generator(Configurable):
             )
         self._llm_with_wrap = self._llm
         # create prompt template
+        # from the LLM, not the config: both are capped to what the model supports
         self._max_prompt_length: int = (
-            self.config[self._config_key]["context_length"] - self.config[self._config_key]["max_tokens"] - 100 - 1
+            self._llm.n_ctx - self._llm.max_tokens - 100 - 1
         )  # placeholder, will need to calculate this
         self._prompt: Prompt = prompt
         self._template: BasePromptTemplate | None = None

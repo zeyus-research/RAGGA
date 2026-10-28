@@ -1,3 +1,9 @@
+"""Chat with your notes, using RAGGA as a library (for the command line tool, see `ragga --help`).
+
+Usage: python tinyllama_example.py [model.gguf] [notes folder]
+By default it uses the first .gguf file in ./models and the notes in ./data.
+"""
+
 import logging
 import sys
 from pathlib import Path
@@ -14,6 +20,9 @@ from ragga import (
     VectorDatabase,
     WebSearchRetriever,
 )
+from ragga.core.config import DEFAULT_CONFIG_PATH
+
+HERE = Path(__file__).parent
 
 
 def output_model_response_stream(model_response: str) -> None:
@@ -24,7 +33,17 @@ def output_model_response_stream(model_response: str) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logging.debug("loading config...")
-    conf = Config(config_path=Path(__file__).parent / "config.yaml")
+    conf = Config(config_path=DEFAULT_CONFIG_PATH)
+
+    args = sys.argv[1:]
+    models = sorted((HERE / "models").glob("*.gguf"))
+    model = Path(args[0]) if args else (models[0] if models else None)
+    notes = Path(args[1]) if args[1:] else HERE / "data"
+    if model is None or not model.is_file():
+        sys.exit(f"No model found: download a GGUF chat model (see README) into {HERE / 'models'}, or pass its path")
+    if not notes.is_dir():
+        sys.exit(f"Notes folder not found: {notes} (put markdown notes there, or pass a folder)")
+    conf.merge({"generator": {"llm_path": str(model)}, "dataset": {"path": str(notes)}})
 
     logging.info("loading dataset, this will take a while the first time...")
     dataset = MarkdownDataset(conf)

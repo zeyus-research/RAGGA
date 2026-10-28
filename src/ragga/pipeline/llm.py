@@ -1,12 +1,14 @@
 """Minimal langchain LLM wrapper around an in-process llama.cpp model (llama-cpp-python)."""
 
+import logging
 from collections.abc import Iterator
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.llms import LLM
 from langchain_core.outputs import GenerationChunk
-from llama_cpp import Llama
+from llama_cpp import Llama, llama_model_default_params
+from llama_cpp._internals import LlamaModel
 from pydantic import ConfigDict, Field, PrivateAttr
 
 
@@ -33,6 +35,14 @@ class LlamaCpp(LLM):
 
     def model_post_init(self, context: Any, /) -> None:
         super().model_post_init(context)
+        trained = self.trained_context_length(self.model_path)
+        if trained and self.n_ctx > trained:
+            # past its training context a model produces gibberish (e.g. TinyLlama: 2048)
+            logging.warning(f"context_length {self.n_ctx} is more than the model supports, using {trained}")
+            self.n_ctx = trained
+            if self.max_tokens > trained // 4:  # leave most of a small context for the notes
+                logging.warning(f"max_tokens {self.max_tokens} is too long for this context, using {trained // 4}")
+                self.max_tokens = trained // 4
         self._client = Llama(
             model_path=self.model_path,
             n_ctx=self.n_ctx,
@@ -40,6 +50,19 @@ class LlamaCpp(LLM):
             n_batch=self.n_batch,
             **self.model_kwargs,
         )
+
+    @staticmethod
+    def trained_context_length(model_path: str) -> int | None:
+        """Context length the model was trained with, from the GGUF metadata (loads only the vocabulary)."""
+        params = llama_model_default_params()
+        params.vocab_only = True
+        model = LlamaModel(path_model=model_path, params=params, verbose=False)  # no context: quick and quiet
+        try:
+            metadata = model.metadata()
+        finally:
+            model.close()
+        value = metadata.get(f"{metadata.get('general.architecture')}.context_length")
+        return int(value) if value else None
 
     @property
     def client(self) -> Llama:

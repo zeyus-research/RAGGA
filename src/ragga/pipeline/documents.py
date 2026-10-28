@@ -61,9 +61,13 @@ class VectorDatabase(Configurable):
             chunk_overlap=splitting["chunk_overlap"],
             add_start_index=True,
         )
-        # one index per embedding model + chunking, so changing either builds a fresh index instead of mixing them
+        # one index per notes folder, embedding model and chunking: changing any of them builds a fresh index instead of
+        # mixing them (the indexer only removes notes of the folder being synced)
+        notes = self.config.config.get("dataset", {}).get("path")
+        notes = str(Path(notes).expanduser().resolve()) if notes else ""
         fingerprint = hashlib.sha256(
-            f"{encoder.model_name}|{splitting['chunk_size']}|{splitting['chunk_overlap']}|{PASSAGE_FORMAT_VERSION}".encode()
+            f"{notes}|{encoder.model_name}|{splitting['chunk_size']}|{splitting['chunk_overlap']}|"
+            f"{PASSAGE_FORMAT_VERSION}".encode()
         ).hexdigest()[:12]
         cache_dir = Path(self.config[self.key]["cache_dir"])
         self._index_db_path = cache_dir / ".record_index.db"
