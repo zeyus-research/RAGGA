@@ -36,6 +36,8 @@ classifiers = [
 ]
 dependencies = [
   "beautifulsoup4>=4.14",
+  # unstructured (markdown parsing) needs this spaCy model, and downloads it on first use when it isn't installed
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "langchain-classic>=1.0",
   "langchain-core>=1.6",
   "langchain-huggingface>=1.2",

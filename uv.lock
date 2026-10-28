@@ -790,6 +790,14 @@ wheels = [
 ]
 
 [[package]]
+name = "en-core-web-sm"
+version = "3.8.0"
+source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
+]
+
+[[package]]
 name = "filelock"
 version = "4.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2862,6 +2870,7 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
+    { name = "en-core-web-sm" },
     { name = "langchain-classic" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
@@ -2914,6 +2923,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.14" },
     { name = "columnar", marker = "extra == 'eval'", specifier = ">=1.4.1" },
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "langchain-classic", specifier = ">=1.0" },
     { name = "langchain-core", specifier = ">=1.6" },
     { name = "langchain-huggingface", specifier = ">=1.2" },

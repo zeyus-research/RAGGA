@@ -58,7 +58,7 @@ jobs:
       - name: Audit locked dependencies for known vulnerabilities
         # The torch extras conflict, so each variant is exported and audited separately.
         # Local torch builds (+cpu/+cu130/+rocm7.2) are audited as the matching PyPI release, and packages that
-        # aren't on PyPI at all (triton-rocm) are skipped, as are packages removed with an
+        # aren't on PyPI at all (the spaCy model wheel, triton-rocm) are skipped, as are packages removed with an
         # impossible `sys_platform == 'never'` override (never installed, see override-dependencies in pyproject.toml).
         # PYSEC-2026-2447 (diskcache pickle, no fix available) is only reachable via llama-cpp-python's optional
         # LlamaDiskCache, which ragga doesn't use.
@@ -67,7 +67,7 @@ jobs:
             echo "::group::audit [$extra]"
             uv export --locked --extra "$extra" --extra eval --all-groups --no-emit-project --no-hashes \
                 --format requirements-txt \
-              | grep -vE "^triton-rocm|sys_platform == 'never'" \
+              | grep -vE "^(en-core-web-sm|triton-rocm)|sys_platform == 'never'" \
               | sed -E 's/^(torch==[0-9.]+)\+[a-z0-9.]+/\1/' > "requirements-audit-$extra.txt"
             uvx pip-audit --strict --disable-pip --no-deps --progress-spinner off \
               --ignore-vuln PYSEC-2026-2447 -r "requirements-audit-$extra.txt"
