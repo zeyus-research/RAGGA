@@ -24,19 +24,10 @@ import sys
 import tempfile
 from io import SEEK_SET, StringIO, TextIOWrapper
 
-WIN: bool = os.name == "nt"
-if not WIN:
-    libc = ctypes.CDLL(None)
-    c_stdout = ctypes.c_void_p.in_dll(libc, "stdout")
-    c_stderr = ctypes.c_void_p.in_dll(libc, "stderr")
-else:
-    if hasattr(sys, "gettotalrefcount"):
-        libc = ctypes.CDLL("ucrtbase.dll")
-    else:
-        libc = ctypes.CDLL("msvcrt.dll")
-    kernel32 = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
-    c_stdout = kernel32.GetStdHandle(-11)
-    c_stderr = kernel32.GetStdHandle(-12)
+# The C runtime that CPython and llama.cpp write through (the Universal CRT on Windows).
+# Only fflush(NULL) is used, which flushes every C output stream, so we don't need the
+# platform specific stdout/stderr symbols (`stdout` on glibc, `__stdoutp` on macOS, ...).
+libc = ctypes.CDLL("ucrtbase.dll" if os.name == "nt" else None)
 
 
 class store_stdout_stderr(object):  # noqa: N801, UP004
@@ -99,11 +90,7 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
         """Flush python and C stdout and stderr buffers."""
         self._sys.stdout.flush()
         self._sys.stderr.flush()
-        if not WIN:
-            libc.fflush(c_stdout)
-            libc.fflush(c_stderr)
-        else:
-            libc.fflush(None)
+        libc.fflush(None)
 
     def __enter__(self) -> tuple[StringIO, StringIO]:
         if self.disable:
