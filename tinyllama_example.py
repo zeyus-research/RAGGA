@@ -24,7 +24,7 @@ def output_model_response_stream(model_response: str) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logging.debug("loading config...")
-    conf = Config(config_path=Path(__file__).parent / "configtest.yaml")
+    conf = Config(config_path=Path(__file__).parent / "config.yaml")
 
     logging.info("loading dataset, this will take a while the first time...")
     dataset = MarkdownDataset(conf)
