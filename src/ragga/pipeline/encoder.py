@@ -1,14 +1,16 @@
 from types import MappingProxyType
 
-from langchain.embeddings import CacheBackedEmbeddings
-from langchain.storage import InMemoryByteStore, LocalFileStore
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_classic.embeddings import CacheBackedEmbeddings
+from langchain_classic.storage import LocalFileStore
+from langchain_core.stores import InMemoryByteStore
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from ragga.core.config import Config, Configurable
 
 
 class Encoder(Configurable):
     """Encoder to create word embeddings"""
+
     _config_key = "encoder"
 
     _store: LocalFileStore | InMemoryByteStore | None = None
@@ -17,20 +19,26 @@ class Encoder(Configurable):
 
     _embeddings: CacheBackedEmbeddings | HuggingFaceEmbeddings
 
-    _default_config = MappingProxyType({
-        "model_path": "sentence-transformers/all-MiniLM-l6-v2",
-        "cache_embeddings": True,
-        "persistent_cache": True,
-        "cache_dir": "cache",
-    })
+    _default_config = MappingProxyType(
+        {
+            "model_path": "sentence-transformers/all-MiniLM-l6-v2",
+            "cache_embeddings": True,
+            "persistent_cache": True,
+            "cache_dir": "cache",
+        }
+    )
 
-    _default_model_kwargs = MappingProxyType({
-        "device": "cuda",
-    })
+    _default_model_kwargs = MappingProxyType(
+        {
+            "device": "cuda",
+        }
+    )
 
-    _default_encode_kwargs = MappingProxyType({
-        "normalize_embeddings": False,
-    })
+    _default_encode_kwargs = MappingProxyType(
+        {
+            "normalize_embeddings": False,
+        }
+    )
 
     def __init__(self, conf: Config) -> None:
         super().__init__(conf)
@@ -53,6 +61,7 @@ class Encoder(Configurable):
                 self._core_embeddings,
                 self._store,
                 namespace=self._core_embeddings.model_name,
+                key_encoder="sha256",
             )
         else:
             self._embeddings = self._core_embeddings

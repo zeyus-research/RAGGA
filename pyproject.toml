@@ -1,15 +1,15 @@
 [build-system]
-requires = ["hatchling", "hatch-requirements-txt"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "ragga"
-dynamic = ["version", "dependencies", "optional-dependencies"]
+version = "0.1.0"
 description = 'Retrieval Augmented Generation (RAG) - General Assistant'
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
-keywords = []
+keywords = ["rag", "llm", "llama.cpp", "langchain", "markdown", "notes"]
 authors = [
   { name = "zeyus (https://github.com/zeyus, https://zeyus.com/)" },
 ]
@@ -18,13 +18,13 @@ classifiers = [
   "Intended Audience :: Developers",
   "Intended Audience :: Education",
   "Intended Audience :: End Users/Desktop",
-  "License :: OSI Approved :: MIT License",
   "Natural Language :: English",
   "Operating System :: OS Independent",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
   "Topic :: Education :: Computer Aided Instruction (CAI)",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Human Machine Interfaces",
@@ -32,116 +32,121 @@ classifiers = [
   "Topic :: Text Processing :: Markup :: Markdown",
   "Topic :: Utilities",
   "Typing :: Typed",
-
 ]
-[tool.hatch.metadata]
-allow-direct-references = true
+dependencies = [
+  "beautifulsoup4>=4.14",
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  "langchain-classic>=1.0",
+  "langchain-community>=0.4",
+  "langchain-core>=1.6",
+  "langchain-huggingface>=1.2",
+  "langchain-text-splitters>=1.1",
+  "llama-cpp-python>=0.3.30",
+  "pyyaml>=6.0.3",
+  "requests>=2.33",
+  "sentence-transformers>=6.0",
+  "spacy>=3.8",
+  "sqlalchemy[asyncio]>=2.1",
+  "unstructured[md]>=0.27",
+]
 
-[tool.hatch.metadata.hooks.requirements_txt]
-files = ["requirements-core.txt"]
+[project.optional-dependencies]
+# Pick exactly one of `cpu` / `gpu` (NVIDIA CUDA) / `rocm` (AMD, Linux only);
+# they select different PyTorch builds. macOS always uses the default PyPI torch (MPS).
+cpu = [
+  "faiss-cpu>=1.15",
+  "torch>=2.14",
+]
+gpu = [
+  # faiss-gpu has no PyPI wheels; faiss-cpu works fine with CUDA torch + llama.cpp offloading.
+  "faiss-cpu>=1.15",
+  "torch>=2.14",
+]
+rocm = [
+  "faiss-cpu>=1.15",
+  "torch>=2.14",
+  "triton-rocm; sys_platform == 'linux'",
+]
+eval = [
+  "columnar>=1.4.1",
+  "matplotlib>=3.10",
+  "pandas>=2.3",
+  "seaborn>=0.13.2",
+]
 
-[tool.hatch.metadata.hooks.requirements_txt.optional-dependencies]
-cpu = ["requirements-cpu.txt"]
-gpu = ["requirements-gpu.txt"]
-eval = ["requirements-eval.txt"]
+[dependency-groups]
+dev = [
+  "mypy>=1.18",
+  "pandas-stubs",
+  "pytest>=8.4",
+  "pytest-cov>=7.0",
+  "ruff>=0.14",
+  "types-beautifulsoup4",
+  "types-pyyaml",
+  "types-requests",
+]
 
 [project.urls]
 Documentation = "https://github.com/zeyus/RAGGA/blob/main/README.md"
 Issues = "https://github.com/zeyus/RAGGA/issues"
 Source = "https://github.com/zeyus/RAGGA"
 
-[tool.hatch.version]
-path = "src/ragga/__about__.py"
+[tool.hatch.metadata]
+# needed for the spaCy model wheel (not published on PyPI)
+allow-direct-references = true
 
-[tool.hatch.envs.default]
-dependencies = [
-  "coverage[toml]>=6.5",
-  "pytest",
-]
-[tool.hatch.envs.default.env-vars]
-# PIP_INDEX_URL = "https://download.pytorch.org/whl/nightly/cu121" # windows gpu
-PIP_INDEX_URL = "" # windows cpu, linux gpu, all mac
-# PIP_INDEX_URL = "https://download.pytorch.org/whl/cpu" # linux cpu
-PIP_PRE = "1"
+[tool.hatch.build.targets.sdist]
+include = ["src/ragga", "tests", "config.yaml", "README.md", "LICENSE"]
 
-[tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
-test-cov = "coverage run -m pytest {args:tests}"
-cov-report = [
-  "- coverage combine",
-  "coverage report",
-]
-cov = [
-  "test-cov",
-  "cov-report",
+[tool.uv]
+required-version = ">=0.9"
+default-groups = ["dev"]
+# Supply-chain cooldown: ignore anything published in the last week, so a
+# compromised release has time to be detected and yanked before we pick it up.
+exclude-newer = "7 days"
+conflicts = [
+  [{ extra = "cpu" }, { extra = "gpu" }, { extra = "rocm" }],
 ]
 
-[[tool.hatch.envs.all.matrix]]
-python = ["3.11"]
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform != 'darwin'" },
+  { index = "pytorch-cu130", extra = "gpu", marker = "sys_platform != 'darwin'" },
+  { index = "pytorch-rocm", extra = "rocm", marker = "sys_platform == 'linux'" },
+]
+triton-rocm = { index = "pytorch-rocm", extra = "rocm" }
 
-[tool.hatch.envs.lint]
-detached = true
-dependencies = [
-  "black>=23.12.1",
-  "git+https://github.com/stdedos/data-science-types",
-  "mypy>=1.7.2",
-  "pandas-stubs>=2.1.4",
-  "ruff>=0.1.14",
-  "types-PyYaml",
-  "types-requests",
-  "types-beautifulsoup4",
-  "types-seaborn",
-]
-[tool.hatch.envs.lint.scripts]
-typing = "mypy --install-types --non-interactive {args:src/ragga tests}"
-style = [
-  "ruff {args:.}",
-  "black --check --diff {args:.}",
-]
-fmt = [
-  "black {args:.}",
-  "ruff --fix {args:.}",
-  "style",
-]
-all = [
-  "style",
-  "typing",
-]
+# `explicit = true`: these indexes are only ever used for torch, nothing else
+# can be resolved from them (prevents dependency-confusion style shadowing).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
-[tool.black]
-target-version = ["py311"]
-line-length = 120
-skip-string-normalization = true
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+markers = ["model: needs a local GGUF model (set RAGGA_TEST_MODEL)"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 120
+extend-exclude = ["scripts", "model_tests.py", "tinyllama_example.py"]
+
+[tool.ruff.lint]
 select = [
-  "A",
-  "ARG",
-  "B",
-  "C",
-  "DTZ",
-  "E",
-  "EM",
-  "F",
-  "FBT",
-  "I",
-  "ICN",
-  "ISC",
-  "N",
-  "PLC",
-  "PLE",
-  "PLR",
-  "PLW",
-  "Q",
-  "RUF",
-  "S",
-  "T",
-  "TID",
-  "UP",
-  "W",
-  "YTT",
+  "A", "ARG", "B", "C", "DTZ", "E", "EM", "F", "FBT", "I", "ICN", "ISC", "N",
+  "PLC", "PLE", "PLR", "PLW", "Q", "RUF", "S", "T", "TID", "UP", "W", "YTT",
 ]
 ignore = [
   # Allow non-abstract empty methods in abstract base classes
@@ -152,33 +157,42 @@ ignore = [
   "S105", "S106", "S107",
   # Ignore complexity
   "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915",
+  # f-strings in logging calls are fine here
+  "G004",
+  # Keep existing public signatures (e.g. store_stdout_stderr(out, err, disable))
+  "FBT001",
 ]
 unfixable = [
   # Don't touch unused imports
   "F401",
 ]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["ragga"]
 
-[tool.ruff.flake8-tidy-imports]
+[tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 # Tests can use magic values, assertions, and relative imports
-"tests/**/*" = ["PLR2004", "S101", "TID252"]
+"tests/**/*" = ["PLR2004", "S101", "TID252", "ARG"]
+# Verbatim MIT license text
+"src/ragga/core/io.py" = ["E501"]
+# callback handler overrides must keep the base-class signatures
+"src/ragga/pipeline/generation.py" = ["ARG002"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
 
 [tool.coverage.run]
-source_pkgs = ["ragga", "tests"]
+source_pkgs = ["ragga"]
 branch = true
-parallel = true
-omit = [
-  "src/ragga/__about__.py",
-]
-
-[tool.coverage.paths]
-ragga = ["src/ragga", "*/ragga/src/ragga"]
-tests = ["tests", "*/ragga/tests"]
+omit = ["src/ragga/__about__.py"]
 
 [tool.coverage.report]
 exclude_lines = [

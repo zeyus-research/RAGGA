@@ -1,14 +1,13 @@
 from abc import ABC, abstractmethod
 from types import MappingProxyType
 
-from langchain.prompts import (
+from langchain_core.prompts import (
+    BasePromptTemplate,
     ChatMessagePromptTemplate,
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
     PromptTemplate,
-    SystemMessagePromptTemplate,
 )
-from langchain_core.prompts import BasePromptTemplate
 
 from ragga.core.config import Config, Configurable
 
@@ -62,6 +61,7 @@ class Prompt(ABC, Configurable):
         """Get the prompt"""
         pass
 
+
 class ChatPrompt(Prompt):
     """Chat prompt"""
 
@@ -84,25 +84,28 @@ class ChatPrompt(Prompt):
                 self.config[self._config_key][k] = v.replace("<<AI_NAME>>", self.config[self._config_key]["AI_name"])
 
     def get_prompt(self, **_kwargs) -> ChatPromptTemplate:
-        return ChatPromptTemplate.from_messages([
-            ChatMessagePromptTemplate.from_template(
-                role=self.config[self._config_key]["instruct_user"],
-                template="\n\n".join([
-                    self.config[self._config_key]["instructions"],
-                    self.config[self._config_key]["pre_context"],
-                    "{context}",
-                    self.config[self._config_key]["post_context"],
-                ])
-            ),
-            ChatMessagePromptTemplate.from_template(
-                role=self.config[self._config_key]["AI_name"],
-                template="How can I help?"
-            ),
-            ChatMessagePromptTemplate.from_template(
-                role=self.config[self._config_key]["user_name"] + " query:",
-                template=self.config[self._config_key]["user_query"]
-            )
-        ])
+        return ChatPromptTemplate.from_messages(
+            [
+                ChatMessagePromptTemplate.from_template(
+                    role=self.config[self._config_key]["instruct_user"],
+                    template="\n\n".join(
+                        [
+                            self.config[self._config_key]["instructions"],
+                            self.config[self._config_key]["pre_context"],
+                            "{context}",
+                            self.config[self._config_key]["post_context"],
+                        ]
+                    ),
+                ),
+                ChatMessagePromptTemplate.from_template(
+                    role=self.config[self._config_key]["AI_name"], template="How can I help?"
+                ),
+                ChatMessagePromptTemplate.from_template(
+                    role=self.config[self._config_key]["user_name"] + " query:",
+                    template=self.config[self._config_key]["user_query"],
+                ),
+            ]
+        )
 
 
 class Phi2QAPrompt(Prompt):
@@ -115,10 +118,11 @@ class Phi2QAPrompt(Prompt):
     "where the model generates the text after "Output:".
 
     """
+
     _default_config = MappingProxyType({})
 
     def get_prompt(self, **kwargs) -> PromptTemplate:
-        if "docs" in kwargs and kwargs["docs"]:
+        if kwargs.get("docs"):
             return PromptTemplate.from_template(
                 "Instruct: Answer the question succinctly using the following document extracts:\n"
                 "[DATA]\n"
@@ -127,7 +131,7 @@ class Phi2QAPrompt(Prompt):
                 "{question}\n"
                 "Output: "
             )
-        elif "web" in kwargs and kwargs["web"]:
+        elif kwargs.get("web"):
             return PromptTemplate.from_template(
                 "Instruct: Answer the question succinctly using the following search results:\n"
                 "[DATA]\n"
@@ -137,11 +141,8 @@ class Phi2QAPrompt(Prompt):
                 "Output: "
             )
 
-        return PromptTemplate.from_template(
-            "Instruct: Answer the user succinctly.\n"
-            "{context}{question}\n"
-            "Output: "
-        )
+        return PromptTemplate.from_template("Instruct: Answer the user succinctly.\n{context}{question}\nOutput: ")
+
 
 class Phi2ChatPrompt(Prompt):
     """Prompt wiht Phi-2 specific instruct tokens
@@ -156,36 +157,40 @@ class Phi2ChatPrompt(Prompt):
     "where the model generates the text after the first Bob:".
 
     """
+
     _default_config = MappingProxyType({})
 
     def get_prompt(self, **kwargs) -> ChatPromptTemplate:
-        if "docs" in kwargs and kwargs["docs"]:
-            return ChatPromptTemplate.from_messages([
-                HumanMessagePromptTemplate.from_template(
-                    "Answer the question succinctly using the following document extracts:\n"
-                    "[DATA]\n"
-                    "{context}\n"
-                    "[/DATA]\n"
-                    "{question}"
-                ),
-            ])
-        elif "web" in kwargs and kwargs["web"]:
-            return ChatPromptTemplate.from_messages([
-                HumanMessagePromptTemplate.from_template(
-                    "Answer the question succinctly using the following search results:\n"
-                    "[DATA]\n"
-                    "{context}\n"
-                    "[/DATA]\n"
-                    "{question}"
-                ),
-            ])
+        if kwargs.get("docs"):
+            return ChatPromptTemplate.from_messages(
+                [
+                    HumanMessagePromptTemplate.from_template(
+                        "Answer the question succinctly using the following document extracts:\n"
+                        "[DATA]\n"
+                        "{context}\n"
+                        "[/DATA]\n"
+                        "{question}"
+                    ),
+                ]
+            )
+        elif kwargs.get("web"):
+            return ChatPromptTemplate.from_messages(
+                [
+                    HumanMessagePromptTemplate.from_template(
+                        "Answer the question succinctly using the following search results:\n"
+                        "[DATA]\n"
+                        "{context}\n"
+                        "[/DATA]\n"
+                        "{question}"
+                    ),
+                ]
+            )
 
-        return ChatPromptTemplate.from_messages([
-            HumanMessagePromptTemplate.from_template(
-                "Answer the user succinctly.\n"
-                "{context}{question}"
-            ),
-        ])
+        return ChatPromptTemplate.from_messages(
+            [
+                HumanMessagePromptTemplate.from_template("Answer the user succinctly.\n{context}{question}"),
+            ]
+        )
 
 
 class TinyLlamaChatPrompt(Prompt):
@@ -198,9 +203,11 @@ class TinyLlamaChatPrompt(Prompt):
         {prompt}</s>
         <|assistant|>
     """
+
     _default_config = MappingProxyType({})
+
     def get_prompt(self, **kwargs) -> PromptTemplate:
-        if "docs" in kwargs and kwargs["docs"]:
+        if kwargs.get("docs"):
             return PromptTemplate.from_template(
                 "<|system|>\n"
                 "You are a friendly and helpful AI assistant. "
@@ -212,7 +219,7 @@ class TinyLlamaChatPrompt(Prompt):
                 "{question}</s>\n"
                 "<|assistant|>"
             )
-        elif "web" in kwargs and kwargs["web"]:
+        elif kwargs.get("web"):
             return PromptTemplate.from_template(
                 "<|system|>\n"
                 "You are a friendly and helpful AI assistant. "
@@ -243,10 +250,15 @@ class Llama2ChatPrompt(Prompt):
         <</SYS>>
 
         {{ user_message }} [/INST]
+
+    The BOS token (<s>) is added by llama.cpp, so it's not part of the template.
     """
+
     _default_config = MappingProxyType({})
 
-    def get_prompt(self, **kwargs) -> ChatPromptTemplate:
+    _template = "[INST] <<SYS>>\n{system}\n<</SYS>>\n\n{user} [/INST]"
+
+    def get_prompt(self, **kwargs) -> PromptTemplate:
         """Get the prompt
         Args:
             docs: Whether to include the docs in the prompt.
@@ -254,38 +266,20 @@ class Llama2ChatPrompt(Prompt):
         Returns:
             Constructed prompt. Accepts a "context" variable if docs or web is True.
         """
-        if "docs" in kwargs and kwargs["docs"]:
-            return ChatPromptTemplate.from_messages([
-                SystemMessagePromptTemplate.from_template(
-                    "You are a friendly and helpful AI assistant. "
-                    "Answer the user succinctly using the following documents:\n"
-                    "[DATA]\n"
-                    "{context}\n"
-                    "[/DATA]"
-                ),
-                HumanMessagePromptTemplate.from_template(
-                    "{question}"
-                ),
-            ])
-        elif "web" in kwargs and kwargs["web"]:
-            return ChatPromptTemplate.from_messages([
-                SystemMessagePromptTemplate.from_template(
-                    "You are a friendly and helpful AI assistant. "
-                    "Answer the user succinctly using the following search results:\n"
-                    "[DATA]\n"
-                    "{context}\n"
-                    "[/DATA]"
-                ),
-                HumanMessagePromptTemplate.from_template(
-                    "{context}{question}"
-                ),
-            ])
+        if kwargs.get("docs") or kwargs.get("web"):
+            source = "documents" if kwargs.get("docs") else "search results"
+            system = (
+                "You are a friendly and helpful AI assistant. "
+                f"Answer the user succinctly using the following {source}:\n"
+                "[DATA]\n"
+                "{context}\n"
+                "[/DATA]"
+            )
+            return PromptTemplate.from_template(self._template.format(system=system, user="{question}"))
 
-        return ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(
-                "You are a friendly and helpful AI assistant. Answer the user succinctly.\n"
-            ),
-            HumanMessagePromptTemplate.from_template(
-                "{context}{question}"
-            ),
-        ])
+        return PromptTemplate.from_template(
+            self._template.format(
+                system="You are a friendly and helpful AI assistant. Answer the user succinctly.",
+                user="{context}{question}",
+            )
+        )

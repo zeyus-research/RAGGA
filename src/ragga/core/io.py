@@ -34,9 +34,10 @@ else:
         libc = ctypes.CDLL("ucrtbase.dll")
     else:
         libc = ctypes.CDLL("msvcrt.dll")
-    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32 = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
     c_stdout = kernel32.GetStdHandle(-11)
     c_stderr = kernel32.GetStdHandle(-12)
+
 
 class store_stdout_stderr(object):  # noqa: N801, UP004
     """Store stdout and stderr in buffers.
@@ -70,11 +71,12 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
     _os = os
 
     def __init__(
-            self,
-            outbuff: StringIO | None = None,
-            errbuff: StringIO | None = None,
-            disable: bool | None = None,
-            close_buff: bool | None = None) -> None:
+        self,
+        outbuff: StringIO | None = None,
+        errbuff: StringIO | None = None,
+        disable: bool | None = None,
+        close_buff: bool | None = None,
+    ) -> None:
         """Initialize the class.
 
         Args:
@@ -102,7 +104,6 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
             libc.fflush(c_stderr)
         else:
             libc.fflush(None)
-
 
     def __enter__(self) -> tuple[StringIO, StringIO]:
         if self.disable:
@@ -136,22 +137,10 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
 
         # Redirect stdout and stderr to the temporary files
         self._sys.stdout = TextIOWrapper(  # type: ignore
-            self._os.fdopen(
-                self.stdout_tfile.fileno(),
-                "wb",
-                closefd=False
-            ),
-            encoding="utf-8",
-            write_through=True
+            self._os.fdopen(self.stdout_tfile.fileno(), "wb", closefd=False), encoding="utf-8", write_through=True
         )
         self._sys.stderr = TextIOWrapper(  # type: ignore
-            self._os.fdopen(
-                self.stderr_tfile.fileno(),
-                "wb",
-                closefd=False
-            ),
-            encoding="utf-8",
-            write_through=True
+            self._os.fdopen(self.stderr_tfile.fileno(), "wb", closefd=False), encoding="utf-8", write_through=True
         )
 
         return self.outbuff, self.errbuff
@@ -186,8 +175,3 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
         if self.close_buff:
             self.outbuff.close()
             self.errbuff.close()
-
-
-
-
-

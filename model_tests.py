@@ -68,7 +68,7 @@ models: dict[str, dict] = {
             "generator": {
                 "llm_path": "./models/llama-2-7b-chat.Q5_K_M.gguf",
                 # "hf_tokenizer": "KoboldAI/llama2-tokenizer",
-                "llama": True,
+                "llama": False,  # Llama2ChatPrompt emits the [INST] format itself
                 "context_length": 2048, # supports 4096 but less is faster and consistent with others
                 "autoflush": False,
             }

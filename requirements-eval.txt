@@ -1,5 +1,0 @@
-columnar==1.4.1
-langchain-benchmarks==0.0.10
-matplotlib==3.8.2
-pandas==2.2.0
-seaborn==0.13.2

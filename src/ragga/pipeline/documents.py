@@ -3,12 +3,14 @@ import typing as t
 from pathlib import Path
 from types import MappingProxyType
 
-from langchain.docstore.document import Document
-from langchain.indexes import SQLRecordManager, index
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import VectorStore
-from langchain.vectorstores.faiss import FAISS
-from langchain_core.vectorstores import VectorStoreRetriever
+import faiss
+from langchain_classic.indexes import SQLRecordManager
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_core.indexing import index
+from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ragga.core.config import Config, Configurable
 from ragga.pipeline.encoder import Encoder
@@ -18,14 +20,16 @@ class VectorDatabase(Configurable):
     """FAISS based Vector database"""
 
     _config_key = "retriever"
-    _default_config = MappingProxyType({
-        "splitting": {
-            "chunk_size": 256,
-            "chunk_overlap": 16,
-        },
-        "num_docs": 4,
-        "cache_dir": ".cache",
-    })
+    _default_config = MappingProxyType(
+        {
+            "splitting": {
+                "chunk_size": 256,
+                "chunk_overlap": 16,
+            },
+            "num_docs": 4,
+            "cache_dir": ".cache",
+        }
+    )
     _db: FAISS | None = None
     _vector_store: type[FAISS]
     _retriever: VectorStoreRetriever | None = None
@@ -43,8 +47,9 @@ class VectorDatabase(Configurable):
             chunk_size=self.config[self._config_key]["splitting"]["chunk_size"],
             chunk_overlap=self.config[self._config_key]["splitting"]["chunk_overlap"],
         )
-        self._index_db_path = self.config[self.key]["cache_dir"] + "/.record_index.db"
-        self._vector_db_path = Path(self.config[self.key]["cache_dir"] + "/.faiss")
+        cache_dir = Path(self.config[self.key]["cache_dir"])
+        self._index_db_path = cache_dir / ".record_index.db"
+        self._vector_db_path = cache_dir / ".faiss"
         self._encoder = encoder
         self._documents = []
         self._vector_store = FAISS
@@ -54,8 +59,7 @@ class VectorDatabase(Configurable):
             db_url=f"sqlite:///{self._index_db_path}",
         )
 
-        if not self._vector_db_path.exists():
-            self._vector_db_path.mkdir(parents=True)
+        self._vector_db_path.mkdir(parents=True, exist_ok=True)
         self._create_db()
 
     @property
@@ -106,6 +110,7 @@ class VectorDatabase(Configurable):
                 vector_store=self._db,
                 cleanup=mode,
                 source_id_key="source",
+                key_encoder="sha256",
             )
 
     def _clear_index(self) -> None:
@@ -131,21 +136,32 @@ class VectorDatabase(Configurable):
         self._record_manager.create_schema()
         if self._db is None:
             logging.info("Setting up FAISSS vector database")
-            if ((self._vector_db_path / f"{self._faiss_index}.faiss").exists()
-                and (self._vector_db_path / f"{self._faiss_index}.pkl").exists()):
+            if (self._vector_db_path / f"{self._faiss_index}.faiss").exists() and (
+                self._vector_db_path / f"{self._faiss_index}.pkl"
+            ).exists():
                 logging.info("Loading FAISS vector database from disk")
                 self._db = self._vector_store.load_local(
                     folder_path=str(self._vector_db_path),
                     embeddings=self._encoder.embeddings,
                     index_name=self._faiss_index,
+                    # the docstore is pickled; we only ever load the one RAGGA wrote to its own cache_dir
+                    allow_dangerous_deserialization=True,
                 )
                 self._loaded_from_disk = True
                 logging.warning(
                     "FAISS vector database loaded from disk: "
-                    "No documents will exist in this object, but they will be available in the database.")
+                    "No documents will exist in this object, but they will be available in the database."
+                )
             else:
                 logging.info("Creating new FAISS vector database")
-                self._db = self._vector_store.from_texts(["ZEROINDEX"], self._encoder.embeddings)
+                embeddings = self._encoder.embeddings
+                dim = len(embeddings.embed_query("dimension probe"))
+                self._db = self._vector_store(
+                    embedding_function=embeddings,
+                    index=faiss.IndexFlatL2(dim),
+                    docstore=InMemoryDocstore(),
+                    index_to_docstore_id={},
+                )
         self._update_index()
 
     def merge_documents(self, documents: list[Document]) -> None:

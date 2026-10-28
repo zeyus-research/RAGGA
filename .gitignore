@@ -169,3 +169,5 @@ _config.yaml
 
 reports/
 data/
+# extra uv environments (e.g. UV_PROJECT_ENVIRONMENT=.venv-rocm)
+.venv*/

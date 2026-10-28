@@ -1,10 +1,9 @@
 """Signal dispatching and handling, make classes subscriptable."""
+
 from collections.abc import Callable
-from typing import Generic, TypeVar
 
-T = TypeVar("T")
 
-class PropertyWrapper(Generic[T]):
+class PropertyWrapper[T]:
     def __init__(self, initial_value: T | None = None):
         self._subscribers: list[Callable[[T], None]] = []
         self._value = initial_value
@@ -28,5 +27,3 @@ class PropertyWrapper(Generic[T]):
     def __set__(self, _instance, value: T | None):
         self._value = value
         self.dispatch(new_value=value)
-
-

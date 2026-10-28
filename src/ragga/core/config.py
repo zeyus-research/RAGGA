@@ -4,7 +4,6 @@ from pathlib import Path
 from types import MappingProxyType
 
 import yaml
-from pydantic.v1.utils import deep_update
 
 
 def tuple_constructor(loader, node):
@@ -13,23 +12,38 @@ def tuple_constructor(loader, node):
     # Return a tuple constructed from the sequence
     return tuple(values)
 
+
 # Register the constructor with PyYAML
 yaml.SafeLoader.add_constructor("tag:yaml.org,2002:python/tuple", tuple_constructor)
+
+
+def deep_update(base: dict[str, t.Any], *updates: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Recursively merge `updates` into a copy of `base` (nested dicts are merged, everything else replaced)."""
+    result = dict(base)
+    for update in updates:
+        for key, value in update.items():
+            if isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = deep_update(result[key], value)
+            else:
+                result[key] = value
+    return result
+
 
 class Config:
     def __init__(self, config_path: str | Path | None = None, config: dict | None = None):
         if config_path is not None:
-            self.config = yaml.load(open(config_path), Loader=yaml.SafeLoader)
+            self.config = self._load_config(config_path)
         elif config is not None:
             self.config = config
         else:
             logging.warning("No config file or config dictionary provided. Using default config.")
-            self.parent_path = Path().parent.absolute()
-            self.config = yaml.safe_load(open(f"{self.parent_path}/config.yaml"))
+            self.config = self._load_config(Path.cwd() / "config.yaml")
 
-    def _load_config(self, config_path: str | Path) -> dict:
+    @staticmethod
+    def _load_config(config_path: str | Path) -> dict:
         try:
-            return yaml.safe_load(open(config_path))
+            with open(config_path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
         except FileNotFoundError as e:
             msg = f"Config file not found: {config_path}"
             raise FileNotFoundError(msg) from e
@@ -60,7 +74,6 @@ class Configurable:
         super().__init__()
         self.config = conf
         self._set_config()
-
 
     @property
     def key(self) -> str:

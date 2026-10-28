@@ -5,27 +5,20 @@ from operator import itemgetter
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from langchain.callbacks.manager import CallbackManager
-from langchain.docstore.document import Document
-from langchain.llms.llamacpp import LlamaCpp
-
-# from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import DocumentCompressorPipeline, EmbeddingsFilter
-from langchain.schema.output_parser import StrOutputParser
-from langchain.schema.runnable import RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
-from langchain_community.document_transformers import (
-    LongContextReorder,
-)
-from langchain_core.callbacks.base import BaseCallbackHandler
+# from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import DocumentCompressorPipeline, EmbeddingsFilter
+from langchain_community.document_transformers import LongContextReorder
+from langchain_community.llms import LlamaCpp
+from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
+from langchain_core.documents import Document
 from langchain_core.language_models.base import LanguageModelInput
-from langchain_core.output_parsers.transform import BaseTransformOutputParser
-from langchain_core.prompt_values import ChatPromptValue
+from langchain_core.output_parsers import BaseTransformOutputParser, StrOutputParser
+from langchain_core.prompt_values import PromptValue
 from langchain_core.prompts import BasePromptTemplate
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.runnables import RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
 from langchain_core.runnables.base import Runnable
-from langchain_experimental.chat_models import Llama2Chat
 
-# from transformers import AutoTokenizer, PreTrainedTokenizerBase  # type: ignore
 from ragga.core.config import Config, Configurable
 from ragga.core.dispatch import PropertyWrapper
 from ragga.core.io import store_stdout_stderr
@@ -42,7 +35,6 @@ if TYPE_CHECKING:
 class ModelResponseHandler(BaseCallbackHandler):
     """Callback handler for model output."""
 
-
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._model_response = PropertyWrapper[str](initial_value=None)
@@ -58,25 +50,29 @@ class ModelResponseHandler(BaseCallbackHandler):
         self._model_response.__set__(self, value)
 
     def on_llm_start(
-        self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any  # noqa: ARG002
+        self,
+        serialized: dict[str, Any],
+        prompts: list[str],
+        **kwargs: Any,
     ) -> None:
         """Run when LLM starts running."""
         logging.debug("LLM started...")
 
     def on_chat_model_start(
         self,
-        serialized: dict[str, Any],  # noqa: ARG002
-        messages: list[list["BaseMessage"]],  # noqa: ARG002
-        **kwargs: Any,  # noqa: ARG002
+        serialized: dict[str, Any],
+        messages: list[list["BaseMessage"]],
+        **kwargs: Any,
     ) -> None:
         """Run when LLM starts running."""
         logging.info("Chat model started...")
 
-    def on_llm_new_token(self, token: str, **kwargs: Any) -> None:  # noqa: ARG002
+    def on_llm_new_token(self, token: str | list[str | dict[str, Any]], **kwargs: Any) -> None:
         """Run on new LLM token. Only available when streaming is enabled."""
-        self.model_response = token  # type: ignore
+        # text LLMs (llama.cpp) always emit str; list content only comes from multimodal chat models
+        self.model_response = token if isinstance(token, str) else str(token)
 
-    def on_llm_end(self, response: "LLMResult", **kwargs: Any) -> None:  # noqa: ARG002
+    def on_llm_end(self, response: "LLMResult", **kwargs: Any) -> None:
         """Run when LLM ends running."""
         logging.debug("LLM ended...")
 
@@ -84,22 +80,23 @@ class ModelResponseHandler(BaseCallbackHandler):
         """Run when LLM errors."""
 
     def on_chain_start(
-        self, serialized: dict[str, Any], inputs: dict[str, Any], **kwargs: Any  # noqa: ARG002
+        self,
+        serialized: dict[str, Any],
+        inputs: dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Run when chain starts running."""
         logging.debug("Chain started...")
 
-    def on_chain_end(self, outputs: dict[str, Any], **kwargs: Any) -> None:  # noqa: ARG002
+    def on_chain_end(self, outputs: dict[str, Any], **kwargs: Any) -> None:
         """Run when chain ends running."""
         logging.debug("Chain ended...")
 
-    def on_chain_error(self, error: "BaseException", **kwargs: Any) -> None:  # noqa: ARG002
+    def on_chain_error(self, error: "BaseException", **kwargs: Any) -> None:
         """Run when chain errors."""
         logging.error(f"Chain error: {error}")
 
-    def on_tool_start(
-        self, serialized: dict[str, Any], input_str: str, **kwargs: Any
-    ) -> None:
+    def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kwargs: Any) -> None:
         """Run when tool starts running."""
 
     def on_agent_action(self, action: "AgentAction", **kwargs: Any) -> Any:
@@ -142,7 +139,8 @@ class Generator(Configurable):
     _retriever: BaseRetriever
 
     def __init__(
-        self, conf: Config,
+        self,
+        conf: Config,
         prompt: Prompt,
         vectorstore: VectorDatabase,
         websearch: BaseRetriever | None = None,
@@ -152,17 +150,12 @@ class Generator(Configurable):
         default_kwargs = {
             "streaming": True,
             "verbose": True,
-            "f16_kv": True,
             "echo": False,
             "use_mlock": False,
-            "client": None,
-            "n_parts": -1,
             "n_threads": None,
-            "logprobs": None,
             "seed": -1,
-            "logits_all": False,
-            "vocab_only": False,
-            "suffix": None,
+            # off by default in llama-cpp-python; 2-3x faster prompt processing and generation on GPU
+            "flash_attn": True,
         }
         search_kwargs = {
             "k": self.config[vectorstore.key]["num_docs"],
@@ -200,19 +193,18 @@ class Generator(Configurable):
                 n_gpu_layers=self.config[self._config_key]["gpu_layers"],
                 max_tokens=self.config[self._config_key]["max_tokens"],
                 callbacks=CallbackManager([self._model_response_handler]),
-                n_batch=self.config[self._config_key]["max_tokens"],
+                n_batch=self.config[self._config_key]["n_batch"],
                 **self.config[self._config_key]["model_kwargs"],
             )
-        self._llm_with_wrap:  Runnable[LanguageModelInput, str | BaseMessage]
+        self._llm_with_wrap: Runnable[LanguageModelInput, str | BaseMessage]
         # self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
         #     self.config[self._config_key]["hf_tokenizer"]
         # )
         if self.config[self._config_key]["llama"]:
-            self._llm_with_wrap = Llama2Chat(
-                llm=self._llm,
+            logging.warning(
+                "generator.llama is deprecated and ignored: use Llama2ChatPrompt, which emits the Llama 2 chat format"
             )
-        else:
-            self._llm_with_wrap = self._llm
+        self._llm_with_wrap = self._llm
         # create prompt template
         self._max_prompt_length: int = (
             self.config[self._config_key]["context_length"] - self.config[self._config_key]["max_tokens"] - 100 - 1
@@ -223,7 +215,8 @@ class Generator(Configurable):
         self._vectorstore: VectorDatabase = vectorstore
         self._embeddings_filter = EmbeddingsFilter(
             embeddings=self._vectorstore.encoder.embeddings,
-            similarity_threshold=self.config[self._config_key]["similarity_threshold"])
+            similarity_threshold=self.config[self._config_key]["similarity_threshold"],
+        )
         self._reorder = LongContextReorder()
         self._pipeline = DocumentCompressorPipeline(transformers=[self._embeddings_filter, self._reorder])
         self._retriever: BaseRetriever
@@ -236,16 +229,16 @@ class Generator(Configurable):
         #     self._retriever = self._compression_retriever
         # else:
         self._retriever = self._vectorstore.retriever
+        retrieval: Runnable = self._retriever
+        if self._web_retriever is not None:
+            retrieval = RunnableBranch((self._use_web_retriever, self._web_retriever), self._retriever)
         self._inputs: Runnable = RunnableParallel(  # type: ignore
             {
                 "question": itemgetter("question"),
                 "context": itemgetter("question")
                 | RunnableLambda(func=self._prepare_query)
                 | RunnablePassthrough(func=self._set_template)
-                | RunnableBranch(
-                    (lambda x: self._use_web_retriever(x), self._web_retriever),  # type: ignore
-                    self._retriever
-                )
+                | retrieval
                 | self.condense_context,
             }  # type: ignore
         )
@@ -278,7 +271,7 @@ class Generator(Configurable):
         enc_prompt: list[int] = self._llm.client.tokenize(prompt.encode())
         if len(enc_prompt) > self._max_prompt_length:
             logging.debug("Continuation too long, truncating start...")
-            bprompt: bytes = self._llm.client.detokenize(enc_prompt[-self._max_prompt_length:])
+            bprompt: bytes = self._llm.client.detokenize(enc_prompt[-self._max_prompt_length :])
             prompt = bprompt.decode()
         logging.debug("Continuation length calculated")
         return prompt
@@ -294,9 +287,8 @@ class Generator(Configurable):
         """Get the template"""
         if self._use_web_retriever():
             self._template = self._prompt.get_prompt(web=True)
-        if isinstance(self._last_context, str) and len(self._last_context.strip()) > 0:
+        else:
             self._template = self._prompt.get_prompt(docs=True)
-        self._template = self._prompt.get_prompt()
 
     def _can_continue(self) -> bool:
         """Check if the context can be continued"""
@@ -304,13 +296,13 @@ class Generator(Configurable):
             return False
         return True
 
-    def _store_context(self, ctx: ChatPromptValue | str) -> None:
+    def _store_context(self, ctx: PromptValue | str) -> None:
         """
         Store the context
         Args:
             ctx (str): context
         """
-        if isinstance(ctx, ChatPromptValue):
+        if isinstance(ctx, PromptValue):
             ctx = ctx.to_string()
         self._last_context = ctx
         self._last_output = ""
@@ -337,11 +329,11 @@ class Generator(Configurable):
         """
         # Get relevant keywords
         if self._keywords["what"] is not None:
-            if self._keywords["known"] or self._keywords["where"]  is None:
-                logging.info(f"Using keyword {self._keywords['what'] } as query")
+            if self._keywords["known"] or self._keywords["where"] is None:
+                logging.info(f"Using keyword {self._keywords['what']} as query")
                 return self._keywords["what"]  # type: ignore
-            logging.info(f"Using keywords {self._keywords['what'] } and {self._keywords['where']} as query")
-            return f"{self._keywords['what'] } {self._keywords['where']}"
+            logging.info(f"Using keywords {self._keywords['what']} and {self._keywords['where']} as query")
+            return f"{self._keywords['what']} {self._keywords['where']}"
         logging.info(f"Using full query {x}")
         return x
 
@@ -480,8 +472,12 @@ class Generator(Configurable):
         """
         self._question = question
         self._query_keywords()
+        return self._stream()
+
+    def _stream(self) -> Iterator[str]:
+        # yield inside the context manager: the stream is lazy, so generation happens while iterating
         with store_stdout_stderr(self._model_stdout, self._model_stderr, self._autoflush):
-            return self._chain.stream({"question": self._question})
+            yield from self._chain.stream({"question": self._question})
 
     def response_handler(self) -> ModelResponseHandler:
         """Get the response handler"""

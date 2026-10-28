@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import MappingProxyType
 
-from langchain.docstore.document import Document
 from langchain_community.document_loaders import DirectoryLoader, UnstructuredMarkdownLoader
+from langchain_core.documents import Document
 
 from ragga.core.config import Config, Configurable
 
@@ -11,12 +11,14 @@ class MarkdownDataset(Configurable):
     """Markdown dataset"""
 
     _config_key = "dataset"
-    _default_config = MappingProxyType({
-        "path": "data",
-        "recursive": True,
-        "show_progress": True,
-        "use_multithreading": True,
-    })
+    _default_config = MappingProxyType(
+        {
+            "path": "data",
+            "recursive": True,
+            "show_progress": True,
+            "use_multithreading": True,
+        }
+    )
 
     def __init__(self, conf: Config) -> None:
         super().__init__(conf)
@@ -27,7 +29,7 @@ class MarkdownDataset(Configurable):
                 "include_metadata": True,
                 "languages": ["en"],
                 "chunking_strategy": "by_title",
-            }
+            },
         }
         self._merge_default_kwargs(default_loader_kwargs, "loader_kwargs")
 
@@ -59,7 +61,6 @@ class MarkdownDataset(Configurable):
         if len(self._documents) == 0:
             msg = "No documents found in dataset path"
             raise ValueError(msg)
-
 
     def __repr__(self) -> str:
         return f"MarkdownDataset({self.config[self._config_key]['path']})"

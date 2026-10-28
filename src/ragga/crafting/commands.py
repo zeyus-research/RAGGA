@@ -1,24 +1,30 @@
-import spacy
-from spacy.cli.download import download
+from functools import cache
 
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    # download en_core_web_sm
-    download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
+import spacy
+from spacy.language import Language
+
+SPACY_MODEL = "en_core_web_sm"
+
+
+@cache
+def get_nlp() -> Language:
+    """Load the spaCy pipeline once, on first use (it's installed as a package dependency)."""
+    try:
+        return spacy.load(SPACY_MODEL)
+    except OSError as e:
+        msg = f"spaCy model '{SPACY_MODEL}' is not installed, reinstall ragga or install the model manually."
+        raise RuntimeError(msg) from e
 
 
 def extract_keywords(
-        text: str,
-        known_locations: set[str] | None = None
-    ) -> tuple[str | None, str | None, str | None, bool]:
+    text: str, known_locations: set[str] | None = None
+) -> tuple[str | None, str | None, str | None, bool]:
     """
     Extracts the command, what and where from a text.
     :param text: a text
     :return: a tuple of command, what and where
     """
-    doc = nlp(text)
+    doc = get_nlp()(text)
     what_pos = set({"NOUN", "PROPN", "ADP"})
     exclude_dep = set({"poss", "prep"})
     where_dep = set({"dobj", "pobj", "compound", "amod", "nsubj"})
@@ -35,13 +41,11 @@ def extract_keywords(
             continue
         if token.head.lemma_ == command:
             what_root = token
-            what = " ".join(
-                [t.text for t in token.subtree if t.dep_ not in exclude_dep])
+            what = " ".join([t.text for t in token.subtree if t.dep_ not in exclude_dep])
         if token.pos_ in what_pos:
             if where is None:
                 if token.dep_ in where_dep and (token.head.lemma_ == command or token.head == what_root):
-                    where = " ".join(
-                        [t.text for t in token.subtree if t.dep_ not in exclude_dep])
+                    where = " ".join([t.text for t in token.subtree if t.dep_ not in exclude_dep])
 
     if command is not None:
         command = command.lower()

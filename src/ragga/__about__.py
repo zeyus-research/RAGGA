@@ -1,4 +1,7 @@
 # SPDX-FileCopyrightText: 2023-present zeyus <zeyus@zeyus.com>
 #
 # SPDX-License-Identifier: MIT
-__version__ = "0.0.6"
+from importlib.metadata import version
+
+# single source of truth is `version` in pyproject.toml (bump with `uv version --bump minor`)
+__version__ = version("ragga")
