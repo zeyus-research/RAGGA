@@ -86,6 +86,11 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
         self.disable = disable if disable is not None else False
         self.close_buff = close_buff if close_buff is not None else disable is None
 
+    @staticmethod
+    def _decode(data: bytes) -> str:
+        """Decode captured output, normalising Windows line endings (C runtimes write \\r\\n in text mode)."""
+        return data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
     def _flush_stdout_stderr(self) -> None:
         """Flush python and C stdout and stderr buffers."""
         self._sys.stdout.flush()
@@ -124,10 +129,16 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
 
         # Redirect stdout and stderr to the temporary files
         self._sys.stdout = TextIOWrapper(  # type: ignore
-            self._os.fdopen(self.stdout_tfile.fileno(), "wb", closefd=False), encoding="utf-8", write_through=True
+            self._os.fdopen(self.stdout_tfile.fileno(), "wb", closefd=False),
+            encoding="utf-8",
+            newline="\n",
+            write_through=True,
         )
         self._sys.stderr = TextIOWrapper(  # type: ignore
-            self._os.fdopen(self.stderr_tfile.fileno(), "wb", closefd=False), encoding="utf-8", write_through=True
+            self._os.fdopen(self.stderr_tfile.fileno(), "wb", closefd=False),
+            encoding="utf-8",
+            newline="\n",
+            write_through=True,
         )
 
         return self.outbuff, self.errbuff
@@ -150,8 +161,8 @@ class store_stdout_stderr(object):  # noqa: N801, UP004
         self.stderr_tfile.seek(0, SEEK_SET)
         self.stdout_tfile.seek(0, SEEK_SET)
         # Write the temporary files to the buffers
-        self.outbuff.write(self.stdout_tfile.read().decode())
-        self.errbuff.write(self.stderr_tfile.read().decode())
+        self.outbuff.write(self._decode(self.stdout_tfile.read()))
+        self.errbuff.write(self._decode(self.stderr_tfile.read()))
         # Close the saved file descriptors
         self._os.close(self.old_stdout_dup)
         self._os.close(self.old_stderr_dup)

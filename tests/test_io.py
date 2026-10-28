@@ -30,3 +30,8 @@ def test_disabled_does_not_capture(capsys):
         print("visible")  # noqa: T201
     assert out.getvalue() == ""
     assert capsys.readouterr().out == "visible\n"
+
+
+def test_decode_normalises_line_endings_and_bad_utf8():
+    # Windows C runtimes write \r\n in text mode; llama.cpp can emit a multi-byte character split across tokens
+    assert store_stdout_stderr._decode(b"a\r\nb\n\xe2\x82") == "a\nb\n�"
