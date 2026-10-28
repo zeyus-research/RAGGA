@@ -202,3 +202,13 @@ class VectorDatabase(Configurable):
     @property
     def loaded_from_disk(self) -> bool:
         return self._loaded_from_disk
+
+    def close(self) -> None:
+        """Close the record manager's SQLite connections (the FAISS index lives in memory / on disk already)."""
+        self._record_manager.engine.dispose()  # type: ignore[union-attr]
+
+    def __enter__(self) -> t.Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
