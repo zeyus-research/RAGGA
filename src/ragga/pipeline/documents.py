@@ -3,10 +3,7 @@ import typing as t
 from pathlib import Path
 from types import MappingProxyType
 
-import faiss
 from langchain_classic.indexes import SQLRecordManager
-from langchain_community.docstore.in_memory import InMemoryDocstore
-from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.indexing import index
 from langchain_core.vectorstores import VectorStore, VectorStoreRetriever
@@ -14,10 +11,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ragga.core.config import Config, Configurable
 from ragga.pipeline.encoder import Encoder
+from ragga.pipeline.vectorstore import NumpyVectorStore
 
 
 class VectorDatabase(Configurable):
-    """FAISS based Vector database"""
+    """Vector database: exact search over a numpy matrix, kept in sync with the documents by langchain's indexer"""
 
     _config_key = "retriever"
     _default_config = MappingProxyType(
@@ -30,8 +28,7 @@ class VectorDatabase(Configurable):
             "cache_dir": ".cache",
         }
     )
-    _db: FAISS | None = None
-    _vector_store: type[FAISS]
+    _db: NumpyVectorStore | None = None
     _retriever: VectorStoreRetriever | None = None
     _passages: list[Document] | None = None
     _documents: list[Document]
@@ -39,7 +36,6 @@ class VectorDatabase(Configurable):
     _encoder: Encoder
     _record_manager: SQLRecordManager
     _loaded_from_disk: bool = False
-    _faiss_index: str = "retriever_index"
 
     def __init__(self, conf: Config, encoder: Encoder, namespace: str | None = None) -> None:
         super().__init__(conf)
@@ -49,10 +45,9 @@ class VectorDatabase(Configurable):
         )
         cache_dir = Path(self.config[self.key]["cache_dir"])
         self._index_db_path = cache_dir / ".record_index.db"
-        self._vector_db_path = cache_dir / ".faiss"
+        self._vector_db_path = cache_dir / ".vectors"
         self._encoder = encoder
         self._documents = []
-        self._vector_store = FAISS
         self._namespace = namespace if namespace is not None else self._config_key
         self._record_manager = SQLRecordManager(
             namespace=self._namespace,
@@ -126,7 +121,7 @@ class VectorDatabase(Configurable):
         if self.passages is None or self.passages == []:
             return
         self._add_to_index(self.passages)
-        self._db.save_local(folder_path=str(self._vector_db_path), index_name=self._faiss_index)
+        self._db.save(self._vector_db_path)
         self._db_is_stale = False
 
     def _create_db(self) -> None:
@@ -135,33 +130,23 @@ class VectorDatabase(Configurable):
         """
         self._record_manager.create_schema()
         if self._db is None:
-            logging.info("Setting up FAISSS vector database")
-            if (self._vector_db_path / f"{self._faiss_index}.faiss").exists() and (
-                self._vector_db_path / f"{self._faiss_index}.pkl"
-            ).exists():
-                logging.info("Loading FAISS vector database from disk")
-                self._db = self._vector_store.load_local(
-                    folder_path=str(self._vector_db_path),
-                    embeddings=self._encoder.embeddings,
-                    index_name=self._faiss_index,
-                    # the docstore is pickled; we only ever load the one RAGGA wrote to its own cache_dir
-                    allow_dangerous_deserialization=True,
-                )
+            if NumpyVectorStore.exists(self._vector_db_path):
+                logging.info("Loading vector database from disk")
+                self._db = NumpyVectorStore.load(self._vector_db_path, self._encoder.embeddings)
                 self._loaded_from_disk = True
                 logging.warning(
-                    "FAISS vector database loaded from disk: "
+                    "Vector database loaded from disk: "
                     "No documents will exist in this object, but they will be available in the database."
                 )
             else:
-                logging.info("Creating new FAISS vector database")
-                embeddings = self._encoder.embeddings
-                dim = len(embeddings.embed_query("dimension probe"))
-                self._db = self._vector_store(
-                    embedding_function=embeddings,
-                    index=faiss.IndexFlatL2(dim),
-                    docstore=InMemoryDocstore(),
-                    index_to_docstore_id={},
-                )
+                logging.info("Creating new vector database")
+                self._db = NumpyVectorStore(self._encoder.embeddings)
+                # The record manager remembers what was indexed. Without a stored index (first run, deleted cache,
+                # or an index from an older RAGGA version) those records are stale and would make the indexer skip
+                # every document, so start over. Embeddings are cached, so nothing gets re-encoded.
+                if stale := self._record_manager.list_keys():
+                    logging.info(f"Resetting {len(stale)} stale index records")
+                    self._record_manager.delete_keys(stale)
         self._update_index()
 
     def merge_documents(self, documents: list[Document]) -> None:
@@ -204,7 +189,7 @@ class VectorDatabase(Configurable):
         return self._loaded_from_disk
 
     def close(self) -> None:
-        """Close the record manager's SQLite connections (the FAISS index lives in memory / on disk already)."""
+        """Close the record manager's SQLite connections (the vectors live in memory / on disk already)."""
         self._record_manager.engine.dispose()  # type: ignore[union-attr]
 
     def __enter__(self) -> t.Self:

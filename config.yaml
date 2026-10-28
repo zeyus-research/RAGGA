@@ -25,8 +25,6 @@ generator:
   gpu_layers: 0 # number of layers to offload to the GPU (if available), null for all layers
   model_kwargs: {}
   search_kwargs: {}
-  similarity_threshold: 0.75
-  compress: False # Not un use. Eventually the context can be compressed to remove redundant information
   llama: False # true if model is a llama model
   autoflush: True # automatically clear the model stdout and stderr buffers, False to manually control flushing
 

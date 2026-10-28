@@ -38,16 +38,18 @@ dependencies = [
   "beautifulsoup4>=4.14",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "langchain-classic>=1.0",
-  "langchain-community>=0.4",
   "langchain-core>=1.6",
   "langchain-huggingface>=1.2",
   "langchain-text-splitters>=1.1",
   "llama-cpp-python>=0.3.30",
+  "numpy>=2.3",
+  "pydantic>=2.12",
   "pyyaml>=6.0.3",
   "requests>=2.33",
   "sentence-transformers>=6.0",
   "spacy>=3.8",
   "sqlalchemy[asyncio]>=2.1",
+  "tqdm>=4.67",
   "unstructured[md]>=0.27",
 ]
 
@@ -55,16 +57,12 @@ dependencies = [
 # Pick exactly one of `cpu` / `gpu` (NVIDIA CUDA) / `rocm` (AMD, Linux only);
 # they select different PyTorch builds. macOS always uses the default PyPI torch (MPS).
 cpu = [
-  "faiss-cpu>=1.15",
   "torch>=2.14",
 ]
 gpu = [
-  # faiss-gpu has no PyPI wheels; faiss-cpu works fine with CUDA torch + llama.cpp offloading.
-  "faiss-cpu>=1.15",
   "torch>=2.14",
 ]
 rocm = [
-  "faiss-cpu>=1.15",
   "torch>=2.14",
   "triton-rocm; sys_platform == 'linux'",
 ]

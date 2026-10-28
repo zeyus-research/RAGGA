@@ -11,8 +11,8 @@ import sys
 os.environ.setdefault("DO_NOT_TRACK", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-# The macOS torch and faiss-cpu wheels each bundle their own libomp.dylib, and LLVM's OpenMP runtime
-# aborts the process when a second copy initialises ("OMP: Error #15").
+# On macOS the torch wheel bundles its own libomp.dylib, and llama-cpp-python links Homebrew's libomp when it was
+# built with OpenMP. LLVM's OpenMP runtime aborts the process when a second copy initialises ("OMP: Error #15").
 if sys.platform == "darwin":
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from langchain_core.documents import Document
 
@@ -60,3 +62,16 @@ def test_merge_documents(open_db):
     db.documents = make_docs()[:1]
     db.merge_documents(make_docs()[1:])
     assert len(db.db.similarity_search("x", k=10)) == 2
+
+
+def test_index_from_older_version_is_rebuilt(open_db, config):
+    # Simulate a cache left by an older RAGGA (or a deleted vector dir): the record manager still lists the docs as
+    # indexed, but there are no stored vectors. They must be re-indexed instead of silently skipped.
+    db = open_db()
+    db.documents = make_docs()
+    _ = db.db
+    for f in (Path(config["retriever"]["cache_dir"]) / ".vectors").iterdir():
+        f.unlink()
+    rebuilt = open_db()
+    rebuilt.documents = make_docs()
+    assert len(rebuilt.db.similarity_search("x", k=10)) == 2

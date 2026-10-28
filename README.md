@@ -40,6 +40,11 @@ Run the [`tinyllama_example.py`](tinyllama_example.py) script to try it out.
 
 ## Installation
 
+> **Upgrading from 0.0.x?** The FAISS index was replaced by a built-in vector store (plain `.npy` + JSON, no pickle).
+> The index is rebuilt automatically on the first run, reusing the cached embeddings, and the old `.cache/.faiss`
+> directory can be deleted.
+
+
 RAGGA supports Python 3.12+ on Linux, macOS and Windows. Pick **one** extra for the PyTorch build
 (used by the sentence-transformers embedding model):
 

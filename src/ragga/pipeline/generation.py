@@ -5,10 +5,6 @@ from operator import itemgetter
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-# from langchain_classic.retrievers import ContextualCompressionRetriever
-from langchain_classic.retrievers.document_compressors import DocumentCompressorPipeline, EmbeddingsFilter
-from langchain_community.document_transformers import LongContextReorder
-from langchain_community.llms import LlamaCpp
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
 from langchain_core.documents import Document
 from langchain_core.language_models.base import LanguageModelInput
@@ -25,6 +21,29 @@ from ragga.core.io import store_stdout_stderr
 from ragga.crafting.commands import extract_keywords
 from ragga.crafting.prompt import Prompt
 from ragga.pipeline.documents import VectorDatabase
+from ragga.pipeline.llm import LlamaCpp
+
+# generator.model_kwargs that are per-completion options rather than llama_cpp.Llama() constructor arguments
+COMPLETION_KWARGS = frozenset(
+    {
+        "echo",
+        "frequency_penalty",
+        "grammar",
+        "logprobs",
+        "min_p",
+        "mirostat_eta",
+        "mirostat_mode",
+        "mirostat_tau",
+        "presence_penalty",
+        "repeat_penalty",
+        "stop",
+        "suffix",
+        "tfs_z",
+        "top_k",
+        "top_p",
+        "typical_p",
+    }
+)
 
 if TYPE_CHECKING:
     from langchain_core.agents import AgentAction, AgentFinish
@@ -129,8 +148,6 @@ class Generator(Configurable):
             "gpu_layers": 50,
             "max_tokens": 128,
             "n_batch": 256,
-            "compress": True,
-            "similarity_threshold": 0.8,
             "llama": False,
             "autoflush": True,
         }
@@ -150,7 +167,6 @@ class Generator(Configurable):
         default_kwargs = {
             "streaming": True,
             "verbose": True,
-            "echo": False,
             "use_mlock": False,
             "n_threads": None,
             "seed": -1,
@@ -186,6 +202,9 @@ class Generator(Configurable):
             )
         with store_stdout_stderr(self._model_stdout, self._model_stderr, self._autoflush):
             # load Llama from local file
+            model_kwargs = dict(self.config[self._config_key]["model_kwargs"])
+            streaming = model_kwargs.pop("streaming", True)
+            generate_kwargs = {k: model_kwargs.pop(k) for k in COMPLETION_KWARGS & model_kwargs.keys()}
             self._llm: LlamaCpp = LlamaCpp(
                 model_path=self.config[self._config_key]["llm_path"],
                 n_ctx=self.config[self._config_key]["context_length"],
@@ -194,7 +213,9 @@ class Generator(Configurable):
                 max_tokens=self.config[self._config_key]["max_tokens"],
                 callbacks=CallbackManager([self._model_response_handler]),
                 n_batch=self.config[self._config_key]["n_batch"],
-                **self.config[self._config_key]["model_kwargs"],
+                streaming=streaming,
+                model_kwargs=model_kwargs,
+                generate_kwargs=generate_kwargs,
             )
         self._llm_with_wrap: Runnable[LanguageModelInput, str | BaseMessage]
         # self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
@@ -213,21 +234,8 @@ class Generator(Configurable):
         self._template: BasePromptTemplate | None = None
         self._output_parser: BaseTransformOutputParser = StrOutputParser()
         self._vectorstore: VectorDatabase = vectorstore
-        self._embeddings_filter = EmbeddingsFilter(
-            embeddings=self._vectorstore.encoder.embeddings,
-            similarity_threshold=self.config[self._config_key]["similarity_threshold"],
-        )
-        self._reorder = LongContextReorder()
-        self._pipeline = DocumentCompressorPipeline(transformers=[self._embeddings_filter, self._reorder])
         self._retriever: BaseRetriever
         self._docs: list[Document] | None = None
-        # This could be instead replaced with a different compression method (without LLM).
-        # if self.config[self._config_key]["compress"]:
-        #     self._compression_retriever = ContextualCompressionRetriever(
-        #         base_compressor=self._pipeline, base_retriever=self._vectorstore.retriever
-        #     )
-        #     self._retriever = self._compression_retriever
-        # else:
         self._retriever = self._vectorstore.retriever
         retrieval: Runnable = self._retriever
         if self._web_retriever is not None:

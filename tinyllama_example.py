@@ -30,14 +30,14 @@ if __name__ == "__main__":
 
     logging.info("loading encoder...")
     encoder = Encoder(conf)
-    logging.debug("loading faiss db...")
-    faiss_db = VectorDatabase(conf, encoder)
-    if not faiss_db.loaded_from_disk:
-        faiss_db.documents = dataset.documents
+    logging.debug("loading vector db...")
+    vector_db = VectorDatabase(conf, encoder)
+    if not vector_db.loaded_from_disk:
+        vector_db.documents = dataset.documents
     logging.debug("loading generator and model...")
     prompt = TinyLlamaChatPrompt(conf)
     logging.info("loading chatbot...")
-    generator = Generator(conf, prompt, faiss_db, websearch=WebSearchRetriever)
+    generator = Generator(conf, prompt, vector_db, websearch=WebSearchRetriever)
     generator.subscribe(output_model_response_stream)
     logging.info("chatbot ready!")
 

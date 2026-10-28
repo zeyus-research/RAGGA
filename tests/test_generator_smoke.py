@@ -32,7 +32,6 @@ def test_answers_from_notes(tmp_path):
                 "llm_path": MODEL,
                 "max_tokens": 48,
                 "temperature": 0.0,
-                "similarity_threshold": 0.0,
                 "gpu_layers": int(os.environ.get("RAGGA_TEST_GPU_LAYERS", "0")),
             },
         }
