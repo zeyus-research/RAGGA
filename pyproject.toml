@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ragga"
-version = "0.2.0"
+version = "0.3.0"
 description = 'Retrieval Augmented Generation (RAG) - General Assistant'
 readme = "README.md"
 requires-python = ">=3.12"
