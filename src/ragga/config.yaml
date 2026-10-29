@@ -46,11 +46,13 @@ generator:
   autoflush: True # automatically clear the model stdout and stderr buffers, False to manually control flushing
 
 dataset:
-  path: "./data" # folder with your markdown notes (e.g. an Obsidian vault), or use `ragga -n ~/notes`
+  path: "./data" # folder with your notes (e.g. an Obsidian vault), or use `ragga -n ~/notes`
+  format: "markdown" # "markdown", or "text" to read files as-is (any plain text notes), or use `ragga --format text`
+  # extensions: [".md", ".markdown"] # file types to load, defaults depend on the format (text: [".txt"])
   recursive: True
   show_progress: True # show progress bar when loading dataset
   use_multithreading: True
-  loader_kwargs:
+  loader_kwargs: # markdown only
     mode: "single" # either "single" or "elements"
     unstructured_kwargs:
       include_metadata: True

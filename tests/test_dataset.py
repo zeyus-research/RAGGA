@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
+from langchain_core.documents import Document
 
-from ragga import Config, MarkdownDataset
+from ragga import DATASET_FORMATS, Config, MarkdownDataset, NoteDataset, TextDataset, load_dataset
 
 
 def dataset_config(path, **extra) -> Config:
@@ -54,3 +55,45 @@ def test_elements_mode(tmp_path):
     assert docs[0].metadata["category"] == "Title"
     assert docs[0].metadata["source"].endswith("a.md")
     assert "element_id" in docs[0].metadata
+
+
+def test_markdown_extensions_override(tmp_path):
+    (tmp_path / "a.md").write_text("# A\n\nmarkdown\n")
+    (tmp_path / "b.markdown").write_text("# B\n\nalso markdown\n")
+    (tmp_path / "c.MD").write_text("# C\n\nupper case\n")
+    default = MarkdownDataset(dataset_config(tmp_path)).documents
+    assert sorted(d.metadata["title"] for d in default) == ["a", "b", "c"]
+    only_md = MarkdownDataset(dataset_config(tmp_path, extensions=["md"])).documents
+    assert sorted(d.metadata["title"] for d in only_md) == ["a", "c"]
+
+
+def test_text_dataset_reads_files_as_is(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "types.ml").write_text("(* Notes on GADTs *)\ntype _ t = Int : int t\n")
+    (tmp_path / "sig.mli").write_text("val f : int -> int\n")
+    (tmp_path / "empty.ml").write_text("  \n")
+    (tmp_path / "readme.md").write_text("# not loaded\n")
+    docs = TextDataset(dataset_config(tmp_path, extensions=[".ml", ".mli"])).documents
+    assert {d.metadata["title"]: d.metadata["folder"] for d in docs} == {"sig": "", "types": "sub"}
+    assert any(d.page_content.startswith("(* Notes on GADTs *)") for d in docs)
+
+
+def test_load_dataset_by_format(tmp_path):
+    assert type(load_dataset(dataset_config(tmp_path))) is MarkdownDataset
+    assert type(load_dataset(dataset_config(tmp_path, format="text"))) is TextDataset
+    with pytest.raises(ValueError, match=r"unknown dataset\.format"):
+        load_dataset(dataset_config(tmp_path, format="org"))
+
+
+def test_custom_note_dataset(tmp_path, monkeypatch):
+    class UpperDataset(NoteDataset):
+        extensions = (".org",)
+
+        def _load_file(self, file, root):
+            return [Document(page_content=file.read_text().upper(), metadata=self._source_metadata(file, root))]
+
+    monkeypatch.setitem(DATASET_FORMATS, "org", UpperDataset)
+    (tmp_path / "todo.org").write_text("* write notes\n")
+    docs = load_dataset(dataset_config(tmp_path, format="org")).documents
+    assert [d.page_content for d in docs] == ["* WRITE NOTES\n"]
+    assert repr(UpperDataset(dataset_config(tmp_path))) == f"UpperDataset({tmp_path})"

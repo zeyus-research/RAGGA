@@ -28,6 +28,13 @@ def test_config_file_then_options_override(tmp_path):
     assert conf["generator"]["context_length"] == 8192  # untouched default
 
 
+def test_note_format_options():
+    assert build_config(parse_args([]))["dataset"]["format"] == "markdown"
+    conf = build_config(parse_args(["--format", "text", "--extensions", ".ml", ".mli"]))
+    assert conf["dataset"]["format"] == "text"
+    assert conf["dataset"]["extensions"] == [".ml", ".mli"]
+
+
 def test_missing_model_and_notes_are_reported(tmp_path, capsys):
     assert main([]) == 2
     assert "No model given" in capsys.readouterr().err

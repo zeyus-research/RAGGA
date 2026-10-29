@@ -10,6 +10,7 @@
   - [RAGGA](#ragga)
   - [Example Usage](#example-usage)
     - [Chatting](#chatting)
+    - [Other note formats](#other-note-formats)
   - [Installation](#installation)
     - [Prerequisites](#prerequisites)
     - [Install from a release](#install-from-a-release)
@@ -22,7 +23,7 @@
 
 ## RAGGA
 
-What is this? Load quantized LLMs and run them on your local devices. Interact with your own notes (currently markdown notes are supported by default) and ask questions about what you have written and get relevant answers from what you have written! Recommended model is TinyLlama-chat https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/blob/main/README.md based on its speed of token generation and it's low system requirements. Try the 8-bit quantized model to start with and if that's still too beefy you can always try 5, 4, etc.
+What is this? Load quantized LLMs and run them on your local devices. Interact with your own notes (markdown by default, or any plain text format, see [Other note formats](#other-note-formats)) and ask questions about what you have written and get relevant answers from what you have written! Recommended model is TinyLlama-chat https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/blob/main/README.md based on its speed of token generation and it's low system requirements. Try the 8-bit quantized model to start with and if that's still too beefy you can always try 5, 4, etc.
 
 Basically, RAGGA is an local LLM based AI assistant that cares about your privacy, and does not require running things via untrusted third party APIs. The one exception is the optional web search (off by default, and it can use your own [SearXNG](#chatting) instance), so nothing ever leaves your system unless you ask it to. Telemetry in
 dependencies (`unstructured`, Hugging Face Hub) is switched off when RAGGA is imported (`DO_NOT_TRACK=1`), and the test
@@ -83,6 +84,20 @@ The default engine is DuckDuckGo. For more privacy, use a [SearXNG](https://docs
 you host yourself. Start RAGGA with `--searxng http://localhost:8888` (this implies `--web`), or set `web.engine:
 searxng` and `web.searxng_url` in your config. RAGGA uses SearXNG's JSON API, so the instance's `settings.yml` needs
 `json` under `search.formats`.
+
+### Other note formats
+
+Notes are read as markdown by default. For other text notes, use the `text` format, which reads each file as-is
+(no parsing) and only needs to know which file types to load, e.g. notes written in OCaml:
+
+```console
+ragga -m models/your-model.gguf -n ~/notes --format text --extensions .ml .mli
+```
+
+or `dataset.format: text` and `dataset.extensions: [".ml", ".mli"]` in your config. To parse a format properly,
+subclass `ragga.NoteDataset`, set its default `extensions` and implement `_load_file` (one file to a list of
+`Document`s, with `self._source_metadata(file, root)` in their metadata), then register it in
+`ragga.DATASET_FORMATS` to select it with `dataset.format`.
 
 For use as a library, see [`tinyllama_example.py`](tinyllama_example.py).
 

@@ -15,10 +15,11 @@ import requests
 from huggingface_hub.utils import logging as hf_logging
 from transformers.utils import logging as transformers_logging
 
-from ragga import Encoder, Generator, MarkdownDataset, VectorDatabase
+from ragga import Encoder, Generator, VectorDatabase, load_dataset
 from ragga.__about__ import __version__
 from ragga.core.config import DEFAULT_CONFIG_PATH, Config
 from ragga.crafting.prompt import GGUFChatPrompt, Llama2ChatPrompt, Phi2ChatPrompt, Prompt, TinyLlamaChatPrompt
+from ragga.dataset.dataset import DATASET_FORMATS
 from ragga.web.search import web_retriever
 
 PROMPTS: dict[str, type[Prompt]] = {
@@ -47,11 +48,17 @@ HELP = "Ask anything about your notes, follow-up questions see the conversation 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="ragga",
-        description="Chat with your markdown notes using a local LLM (llama.cpp).",
+        description="Chat with your notes using a local LLM (llama.cpp).",
         epilog=f"Defaults come from {DEFAULT_CONFIG_PATH}. Settings in --config override them, options override both.",
     )
     parser.add_argument("-m", "--model", type=Path, help="GGUF chat model (generator.llm_path)")
-    parser.add_argument("-n", "--notes", type=Path, help="folder with markdown notes (dataset.path)")
+    parser.add_argument("-n", "--notes", type=Path, help="folder with your notes (dataset.path)")
+    parser.add_argument(
+        "--format", choices=DATASET_FORMATS, help="note format: markdown, or text to read files as-is (dataset.format)"
+    )
+    parser.add_argument(
+        "--extensions", nargs="+", metavar="EXT", help="note file types, e.g. .ml .mli (dataset.extensions)"
+    )
     parser.add_argument("-c", "--config", type=Path, help="YAML config file, merged over the defaults")
     parser.add_argument("-q", "--question", help="answer one question and exit, instead of chatting")
     cache = parser.add_mutually_exclusive_group()
@@ -128,6 +135,8 @@ def build_config(args: argparse.Namespace, temp_dir: str | None = None) -> Confi
         ("generator", "history_tokens"): args.history_tokens,
         ("generator", "temperature"): args.temperature,
         ("dataset", "path"): args.notes,
+        ("dataset", "format"): args.format,
+        ("dataset", "extensions"): args.extensions,
         ("encoder", "model_path"): args.embedding_model,
         ("encoder", "index_device"): args.index_device,
         ("retriever", "num_docs"): args.num_docs,
@@ -179,8 +188,13 @@ def _run(args: argparse.Namespace, temp_dir: str) -> int:
         print(f"ragga: {e}", file=sys.stderr)  # noqa: T201
         return 2
 
+    try:
+        dataset = load_dataset(conf)
+    except ValueError as e:  # e.g. an unknown dataset.format
+        print(f"ragga: {e}", file=sys.stderr)  # noqa: T201
+        return 2
     print("Loading notes...", file=sys.stderr)  # noqa: T201
-    documents = MarkdownDataset(conf).documents
+    documents = dataset.documents
     with VectorDatabase(conf, Encoder(conf)) as db:
         db.documents = documents  # only new or changed notes are embedded
         print("Loading model...", file=sys.stderr)  # noqa: T201
